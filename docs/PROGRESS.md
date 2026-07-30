@@ -6,8 +6,8 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 |---|---|---|
 | 1 | Scaffolding: POMs, quality gates, docs, git | done |
 | 2 | aauth-signing: keys (keypairs, JWK, thumbprints, JWKS) | done — RFC 7638/8037 vectors pass |
-| 3 | aauth-signing: RFC 9421 core | pending |
-| 4 | aauth-signing: Signature-Key + signer/verifier | pending |
+| 3 | aauth-signing: RFC 9421 core | done — signature base, headers, RFC 9530 digest vector |
+| 4 | aauth-signing: Signature-Key + signer/verifier | done — all 4 schemes round-trip; 75 tests |
 | 5 | aauth: errors, identifiers, HTTP abstraction | pending |
 | 6 | aauth: tokens | pending |
 | 7 | aauth: headers | pending |
