@@ -13,7 +13,7 @@ implementation — mirror its behavior, module split, and README structure.
 
 ## Rules
 
-- JDK 17 target (`--release 17`), local JDK may be newer.
+- JDK 26 target (`--release 26`); Java 26+ required (user decision 2026-07-30).
 - Build: `mvn verify` (runs tests, JaCoCo 80% line-coverage gate, Spotless check).
 - Format: `mvn spotless:apply` (Palantir Java Format) before committing.
 - Zero warnings: compiler runs `-Xlint:all,-serial,-processing -Werror`.

@@ -18,6 +18,10 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 
 ## Decision log
 
+- **2026-07-30 — Java baseline raised to 26** (user request, mid-implementation): compiler
+  `--release 26`, enforcer requires Java 26+. Code written against the 17 baseline compiles
+  unchanged; newer language features may be used from here on.
+
 - **2026-07-30 — Toolchain**: local JDK is Corretto 26; compiling with `--release 17`.
   All dependency versions looked up on Maven Central at scaffold time (Nimbus 10.3,
   structured-fields 0.4, Jackson 2.19.0, JUnit BOM 6.1.2, AssertJ 3.27.7).
