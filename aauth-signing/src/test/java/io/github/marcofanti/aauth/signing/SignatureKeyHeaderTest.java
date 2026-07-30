@@ -43,22 +43,23 @@ class SignatureKeyHeaderTest {
     @Test
     void buildsAndParsesJwksUri() {
         String header = SignatureKeyHeader.build(
-                new SignatureScheme.JwksUri("https://agent.example", "aauth-agent.json", "key-1"), "sig", null);
+                new SignatureScheme.JwksUri("https://portal.uma.lab", "aauth-agent.json", "key-1"), "sig", null);
 
         assertThat(header)
-                .isEqualTo("sig=jwks_uri;id=\"https://agent.example\";dwk=\"aauth-agent.json\";kid=\"key-1\"");
+                .isEqualTo("sig=jwks_uri;id=\"https://portal.uma.lab\";dwk=\"aauth-agent.json\";kid=\"key-1\"");
 
         SignatureKeyHeader.Parsed parsed = SignatureKeyHeader.parse(header);
         assertThat(parsed.scheme()).isEqualTo("jwks_uri");
         assertThat(parsed.params())
-                .containsEntry("id", "https://agent.example")
+                .containsEntry("id", "https://portal.uma.lab")
                 .containsEntry("dwk", "aauth-agent.json")
                 .containsEntry("kid", "key-1");
     }
 
     @Test
     void jwksUriDefaultsKid() {
-        SignatureScheme.JwksUri scheme = new SignatureScheme.JwksUri("https://a.example", "aauth-agent.json", null);
+        SignatureScheme.JwksUri scheme =
+                new SignatureScheme.JwksUri("https://keycloak.uma.lab", "aauth-agent.json", null);
         assertThat(scheme.kid()).isEqualTo("key-1");
     }
 
@@ -69,7 +70,7 @@ class SignatureKeyHeaderTest {
                 .hasMessageContaining("id");
         assertThatThrownBy(() -> new SignatureScheme.Jwt("")).isInstanceOf(IllegalArgumentException.class);
         assertThatThrownBy(() -> new SignatureScheme.JktJwt(null)).isInstanceOf(IllegalArgumentException.class);
-        assertThatThrownBy(() -> new SignatureScheme.X509("https://x.example/cert", null))
+        assertThatThrownBy(() -> new SignatureScheme.X509("https://keycloak.uma.lab/cert", null))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("x5t");
     }
@@ -85,9 +86,9 @@ class SignatureKeyHeaderTest {
     @Test
     void buildsX509WithByteSequenceThumbprint() {
         String header = SignatureKeyHeader.build(
-                new SignatureScheme.X509("https://x.example/chain.pem", "dGh1bWI="), "sig", null);
+                new SignatureScheme.X509("https://keycloak.uma.lab/chain.pem", "dGh1bWI="), "sig", null);
 
-        assertThat(header).isEqualTo("sig=x509;x5u=\"https://x.example/chain.pem\";x5t=:dGh1bWI=:");
+        assertThat(header).isEqualTo("sig=x509;x5u=\"https://keycloak.uma.lab/chain.pem\";x5t=:dGh1bWI=:");
     }
 
     @Test

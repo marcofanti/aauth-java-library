@@ -38,7 +38,7 @@ class DefaultHttpClientTest {
             }
         });
         server.start();
-        baseUrl = "http://127.0.0.1:" + server.getAddress().getPort();
+        baseUrl = "http://grafana.uma.lab:" + server.getAddress().getPort();
     }
 
     @AfterAll
@@ -67,7 +67,7 @@ class DefaultHttpClientTest {
 
     @Test
     void connectionFailureRaisesJwksException() {
-        assertThatThrownBy(() -> new DefaultHttpClient().fetchJson("http://127.0.0.1:1/nope"))
+        assertThatThrownBy(() -> new DefaultHttpClient().fetchJson("http://grafana.uma.lab:1/nope"))
                 .isInstanceOf(JwksException.class);
     }
 }

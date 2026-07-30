@@ -17,10 +17,10 @@ import org.junit.jupiter.api.Test;
 
 class TokensTest {
 
-    private static final String AGENT_SERVER = "https://agent.example";
-    private static final String AUTH_SERVER = "https://auth.example";
-    private static final String RESOURCE = "https://resource.example";
-    private static final String AGENT_ID = "aauth:agent@agent.example";
+    private static final String AGENT_SERVER = "https://portal.uma.lab";
+    private static final String AUTH_SERVER = "https://alice-as.uma.lab";
+    private static final String RESOURCE = "https://gateway.uma.lab";
+    private static final String AGENT_ID = "aauth:agent@portal.uma.lab";
 
     private final KeyPair issuerKeys = KeyPairs.generateEd25519();
     private final KeyPair delegateKeys = KeyPairs.generateEd25519();
@@ -33,7 +33,7 @@ class TokensTest {
     private String agentToken() {
         return AgentTokens.create(
                 AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
-                        .ps("https://ps.example")
+                        .ps("https://ps.uma.lab")
                         .build());
     }
 
@@ -45,7 +45,7 @@ class TokensTest {
                 .containsEntry("iss", AGENT_SERVER)
                 .containsEntry("sub", "delegate-1")
                 .containsEntry("dwk", "aauth-agent.json")
-                .containsEntry("ps", "https://ps.example")
+                .containsEntry("ps", "https://ps.uma.lab")
                 .containsKeys("jti", "iat", "exp", "cnf");
     }
 
@@ -57,7 +57,7 @@ class TokensTest {
                         .build());
 
         assertThat(AgentTokens.verify(token, issuerJwksFetcher, AUTH_SERVER)).containsEntry("aud", AUTH_SERVER);
-        assertThatThrownBy(() -> AgentTokens.verify(token, issuerJwksFetcher, "https://other.example"))
+        assertThatThrownBy(() -> AgentTokens.verify(token, issuerJwksFetcher, "https://grafana.uma.lab"))
                 .isInstanceOf(TokenException.class)
                 .hasMessageContaining("audience");
     }
@@ -145,8 +145,9 @@ class TokensTest {
 
     @Test
     void authTokenRejectsActSubMismatch() {
-        String token = AuthTokens.create(
-                authTokenSpec().act(Map.of("sub", "aauth:other@x.example")).build());
+        String token = AuthTokens.create(authTokenSpec()
+                .act(Map.of("sub", "aauth:other@keycloak.uma.lab"))
+                .build());
 
         assertThatThrownBy(() -> AuthTokens.verifyToken(
                         token,
@@ -247,9 +248,9 @@ class TokensTest {
                 issuerKeys.getPrivate(),
                 "key-1",
                 null,
-                Map.of("approver", "https://ps.example", "s256", "abc")));
+                Map.of("approver", "https://ps.uma.lab", "s256", "abc")));
 
         Map<String, Object> claims = ResourceTokens.verify(token, issuerJwksFetcher, null, null, null);
-        assertThat(((Map<?, ?>) claims.get("mission")).get("approver")).isEqualTo("https://ps.example");
+        assertThat(((Map<?, ?>) claims.get("mission")).get("approver")).isEqualTo("https://ps.uma.lab");
     }
 }

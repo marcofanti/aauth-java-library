@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 /** End-to-end sign → verify tests across all Signature-Key schemes. */
 class SignVerifyRoundTripTest {
 
-    private static final String TARGET = "https://resource.example/api/data";
+    private static final String TARGET = "https://gateway.uma.lab/api/data";
 
     private static Map<String, String> sign(SignRequest request) {
         return RequestSigner.sign(request);
@@ -158,12 +158,12 @@ class SignVerifyRoundTripTest {
 
         Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
                 .keyPair(keyPair)
-                .scheme(new SignatureScheme.JwksUri("https://agent.example", "aauth-agent.json", "key-1"))
+                .scheme(new SignatureScheme.JwksUri("https://portal.uma.lab", "aauth-agent.json", "key-1"))
                 .build());
 
         assertThat(SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
                         .jwksFetcher((id, dwk, kid) -> {
-                            assertThat(id).isEqualTo("https://agent.example");
+                            assertThat(id).isEqualTo("https://portal.uma.lab");
                             assertThat(dwk).isEqualTo("aauth-agent.json");
                             return jwks;
                         })
@@ -178,7 +178,7 @@ class SignVerifyRoundTripTest {
 
         Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
                 .keyPair(keyPair)
-                .scheme(new SignatureScheme.JwksUri("https://agent.example", "aauth-agent.json", "key-1"))
+                .scheme(new SignatureScheme.JwksUri("https://portal.uma.lab", "aauth-agent.json", "key-1"))
                 .build());
 
         assertThat(SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
@@ -192,7 +192,7 @@ class SignVerifyRoundTripTest {
         KeyPair keyPair = KeyPairs.generateEd25519();
         Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
                 .keyPair(keyPair)
-                .scheme(new SignatureScheme.JwksUri("https://agent.example", "aauth-agent.json", "key-1"))
+                .scheme(new SignatureScheme.JwksUri("https://portal.uma.lab", "aauth-agent.json", "key-1"))
                 .build());
 
         assertThatThrownBy(() -> SignatureVerifier.verify(
@@ -211,7 +211,7 @@ class SignVerifyRoundTripTest {
         header.put("alg", "EdDSA");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("iss", "https://auth.example");
+        payload.put("iss", "https://alice-as.uma.lab");
         payload.put("dwk", "aauth-server.json");
         payload.put("cnf", Map.of("jwk", Jwk.publicKeyToJwk(agentKeyPair.getPublic(), null)));
         payload.put("exp", Instant.now().getEpochSecond() + 300);
@@ -226,7 +226,7 @@ class SignVerifyRoundTripTest {
                 .build());
 
         assertThat(SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
-                        .jwksFetcher((id, dwk, kid) -> "https://auth.example".equals(id) ? issuerJwks : null)
+                        .jwksFetcher((id, dwk, kid) -> "https://alice-as.uma.lab".equals(id) ? issuerJwks : null)
                         .build()))
                 .isTrue();
     }
@@ -240,7 +240,7 @@ class SignVerifyRoundTripTest {
         header.put("alg", "EdDSA");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("iss", "https://auth.example");
+        payload.put("iss", "https://alice-as.uma.lab");
         payload.put("cnf", Map.of("jwk", Jwk.publicKeyToJwk(agentKeyPair.getPublic(), null)));
         payload.put("exp", Instant.now().getEpochSecond() - 10);
         String expiredToken = Jwts.signEdDsa(header, payload, issuerKeyPair.getPrivate());
@@ -378,7 +378,7 @@ class SignVerifyRoundTripTest {
         String params = signed.get("Signature-Input").substring("sig=".length());
         String base = SignatureBase.build(
                 "GET",
-                "resource.example",
+                "gateway.uma.lab",
                 "/api/data",
                 null,
                 signed,

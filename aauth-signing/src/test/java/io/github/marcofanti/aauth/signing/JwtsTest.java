@@ -16,14 +16,14 @@ class JwtsTest {
         KeyPair keyPair = KeyPairs.generateEd25519();
         Map<String, Object> header = new LinkedHashMap<>(Map.of("alg", "EdDSA", "typ", "aa-agent+jwt"));
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("iss", "https://agent.example");
+        payload.put("iss", "https://portal.uma.lab");
         payload.put("exp", 4102444800L);
 
         String token = Jwts.signEdDsa(header, payload, keyPair.getPrivate());
         Jwts.Decoded decoded = Jwts.parse(token);
 
         assertThat(decoded.header()).containsEntry("alg", "EdDSA").containsEntry("typ", "aa-agent+jwt");
-        assertThat(decoded.claim("iss")).isEqualTo("https://agent.example");
+        assertThat(decoded.claim("iss")).isEqualTo("https://portal.uma.lab");
         assertThat(decoded.numericClaim("exp")).isEqualTo(4102444800L);
         assertThat(decoded.claim("missing")).isNull();
         assertThat(decoded.numericClaim("iss")).isNull();

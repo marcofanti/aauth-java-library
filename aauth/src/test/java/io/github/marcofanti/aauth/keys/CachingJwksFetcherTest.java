@@ -39,7 +39,7 @@ class CachingJwksFetcherTest {
         }
     }
 
-    private static final String AGENT = "https://agent.example";
+    private static final String AGENT = "https://portal.uma.lab";
     private static final String METADATA_URL = AGENT + "/.well-known/aauth-agent.json";
     private static final String JWKS_URL = AGENT + "/jwks.json";
 

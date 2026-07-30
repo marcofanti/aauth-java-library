@@ -72,7 +72,7 @@ class PythonInteropTest {
     @Test
     void javaSignedRequestVerifiesInPython() throws Exception {
         KeyPair keyPair = KeyPairs.generateEd25519();
-        String target = "https://resource.example/api/data?x=1";
+        String target = "https://gateway.uma.lab/api/data?x=1";
         Map<String, String> signed = RequestSigner.sign(SignRequest.builder("GET", target)
                 .keyPair(keyPair)
                 .scheme(new SignatureScheme.Hwk())
@@ -102,7 +102,7 @@ class PythonInteropTest {
         String script = """
                 import json, aauth
                 private_key, _ = aauth.generate_ed25519_keypair()
-                target = "https://resource.example/api/items?q=abc"
+                target = "https://gateway.uma.lab/api/items?q=abc"
                 headers = aauth.sign_request(
                     method="POST", target_uri=target, headers={}, body=None,
                     private_key=private_key, sig_scheme="hwk")
@@ -130,7 +130,7 @@ class PythonInteropTest {
         KeyPair issuerKeys = KeyPairs.generateEd25519();
         KeyPair delegateKeys = KeyPairs.generateEd25519();
         String token = AgentTokens.create(AgentTokens.Spec.builder(
-                        "https://agent.example",
+                        "https://portal.uma.lab",
                         "delegate-1",
                         Jwk.publicKeyToJwk(delegateKeys.getPublic(), null),
                         issuerKeys.getPrivate(),
@@ -160,9 +160,9 @@ class PythonInteropTest {
                 agent_private, agent_public = aauth.generate_ed25519_keypair()
                 agent_jwk = aauth.public_key_to_jwk(agent_public)
                 token = aauth.create_auth_token(
-                    iss="https://auth.example", aud="https://resource.example",
-                    agent="aauth:agent@agent.example", cnf_jwk=agent_jwk,
-                    act={"sub": "aauth:agent@agent.example"}, scope="data.read",
+                    iss="https://alice-as.uma.lab", aud="https://gateway.uma.lab",
+                    agent="aauth:agent@portal.uma.lab", cnf_jwk=agent_jwk,
+                    act={"sub": "aauth:agent@portal.uma.lab"}, scope="data.read",
                     private_key=private_key, kid="as-key-1")
                 jwks = aauth.generate_jwks([aauth.public_key_to_jwk(public_key, kid="as-key-1")])
                 print(json.dumps({"token": token, "jwks": jwks}))
@@ -179,9 +179,9 @@ class PythonInteropTest {
                 iss -> jwks,
                 new AuthTokens.VerifyOptions(
                         AuthTokens.TYPE,
-                        "https://auth.example",
-                        "https://resource.example",
-                        "aauth:agent@agent.example",
+                        "https://alice-as.uma.lab",
+                        "https://gateway.uma.lab",
+                        "aauth:agent@portal.uma.lab",
                         null));
 
         assertThat(claims).containsEntry("scope", "data.read");

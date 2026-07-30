@@ -28,21 +28,21 @@ class CoreTypesTest {
 
     @Test
     void requestNormalizesMethodAndPath() {
-        AAuthRequest request = new AAuthRequest("get", "resource.example", null, null, null, null);
+        AAuthRequest request = new AAuthRequest("get", "gateway.uma.lab", null, null, null, null);
 
         assertThat(request.method()).isEqualTo("GET");
         assertThat(request.path()).isEqualTo("/");
-        assertThat(request.targetUri()).isEqualTo("https://resource.example/");
+        assertThat(request.targetUri()).isEqualTo("https://gateway.uma.lab/");
     }
 
     @Test
     void requestHeaderLookupIsCaseInsensitive() {
         AAuthRequest request =
-                new AAuthRequest("GET", "resource.example", "/api", "a=1", Map.of("Signature-Input", "sig=..."), null);
+                new AAuthRequest("GET", "gateway.uma.lab", "/api", "a=1", Map.of("Signature-Input", "sig=..."), null);
 
         assertThat(request.getHeader("signature-input")).isEqualTo("sig=...");
         assertThat(request.getHeader("missing")).isNull();
-        assertThat(request.targetUri()).isEqualTo("https://resource.example/api?a=1");
+        assertThat(request.targetUri()).isEqualTo("https://gateway.uma.lab/api?a=1");
     }
 
     @Test

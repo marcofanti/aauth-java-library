@@ -37,23 +37,23 @@ var keyPair = KeyPairs.generateEd25519();
 
 // Sign a request (pseudonymous — public key embedded in the Signature-Key header)
 Map<String, String> signedHeaders = RequestSigner.sign(
-        SignRequest.builder("GET", "https://resource.example/api/data")
+        SignRequest.builder("GET", "https://gateway.uma.lab/api/data")
                 .keyPair(keyPair)
                 .scheme(new SignatureScheme.Hwk())
                 .build());
 
 // Sign with agent identity (JWKS-backed)
 Map<String, String> identityHeaders = RequestSigner.sign(
-        SignRequest.builder("POST", "https://resource.example/api/data")
+        SignRequest.builder("POST", "https://gateway.uma.lab/api/data")
                 .headers(Map.of("Content-Type", "application/json"))
                 .body(bodyBytes)
                 .keyPair(keyPair)
-                .scheme(new SignatureScheme.JwksUri("https://agent.example", "aauth-agent.json", "key-1"))
+                .scheme(new SignatureScheme.JwksUri("https://portal.uma.lab", "aauth-agent.json", "key-1"))
                 .build());
 
 // Sign with an auth token
 Map<String, String> tokenHeaders = RequestSigner.sign(
-        SignRequest.builder("GET", "https://resource.example/api/data")
+        SignRequest.builder("GET", "https://gateway.uma.lab/api/data")
                 .keyPair(keyPair)
                 .scheme(new SignatureScheme.Jwt(authToken))
                 .build());
@@ -89,16 +89,16 @@ import io.github.marcofanti.aauth.tokens.*;
 
 // Resource token (resource → auth server)
 String resourceToken = ResourceTokens.create(new ResourceTokens.Spec(
-        "https://resource.example", "https://auth.example",
-        "aauth:agent@agent.example", agentThumbprint, "data.read data.write",
+        "https://gateway.uma.lab", "https://alice-as.uma.lab",
+        "aauth:agent@portal.uma.lab", agentThumbprint, "data.read data.write",
         resourcePrivateKey, "resource-key-1", null, null));
 
 // Auth token (auth server → agent)
 String authToken = AuthTokens.create(AuthTokens.Spec.builder(
-                "https://auth.example", "https://resource.example", "aauth:agent@agent.example")
+                "https://alice-as.uma.lab", "https://gateway.uma.lab", "aauth:agent@portal.uma.lab")
         .cnfJwk(agentJwk)
         .signingKey(authPrivateKey, "auth-key-1")
-        .act(Map.of("sub", "aauth:agent@agent.example"))
+        .act(Map.of("sub", "aauth:agent@portal.uma.lab"))
         .scope("data.read")
         .build());
 
@@ -117,7 +117,7 @@ var challenge = AAuthHeaders.parseAAuthHeader(
 
 // Build challenges
 String authTokenChallenge = AAuthHeaders.buildAuthTokenRequirement(resourceToken);
-String interaction = AAuthHeaders.buildInteractionRequirement("https://ps.example/i", "ABCD1234");
+String interaction = AAuthHeaders.buildInteractionRequirement("https://ps.uma.lab/i", "ABCD1234");
 ```
 
 ## High-level agent and resource APIs
@@ -128,15 +128,15 @@ import io.github.marcofanti.aauth.resource.*;
 
 // Agent-side request signer
 AgentRequestSigner signer = AgentRequestSigner.builder(keyPair)
-        .agentId("https://agent.example")
+        .agentId("https://portal.uma.lab")
         .agentToken(agentToken)
         .build();
 Map<String, String> headers = signer.signRequest(
-        "GET", "https://resource.example/api/data", Map.of(), null, "jwt");
+        "GET", "https://gateway.uma.lab/api/data", Map.of(), null, "jwt");
 
 // Resource-side request verifier
 RequestVerifier verifier = new RequestVerifier(
-        List.of("resource.example:443"), myJwksFetcher);
+        List.of("gateway.uma.lab:443"), myJwksFetcher);
 RequestVerifier.Result result = verifier.verifyRequest(
         method, targetUri, requestHeaders, requestBody,
         /* requireIdentity */ true, /* requireAuthToken */ true);
@@ -146,7 +146,7 @@ if (result.valid()) {
 
 // Resource-side challenge building (401 responses)
 ChallengeBuilder challenges = new ChallengeBuilder(
-        "https://resource.example", resourcePrivateKey, "resource-key-1", "https://auth.example");
+        "https://gateway.uma.lab", resourcePrivateKey, "resource-key-1", "https://alice-as.uma.lab");
 var challenge = challenges.buildChallenge(
         ChallengeBuilder.Spec.authToken(agentId, agentPublicKey, "data.read"));
 response.setHeader(challenge.headerName(), challenge.headerValue());

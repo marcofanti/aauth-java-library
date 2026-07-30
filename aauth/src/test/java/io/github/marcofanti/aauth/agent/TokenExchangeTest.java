@@ -32,7 +32,7 @@ class TokenExchangeTest {
     void startServer() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.start();
-        base = "http://127.0.0.1:" + server.getAddress().getPort();
+        base = "http://ps.uma.lab:" + server.getAddress().getPort();
     }
 
     @AfterEach
@@ -43,7 +43,7 @@ class TokenExchangeTest {
     private String resourceToken() {
         Map<String, Object> header = new LinkedHashMap<>(Map.of("typ", "aa-resource+jwt", "alg", "EdDSA"));
         Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("iss", "https://resource.example");
+        payload.put("iss", "https://gateway.uma.lab");
         payload.put("aud", base);
         return Jwts.signEdDsa(header, payload, psKeys.getPrivate());
     }
@@ -181,7 +181,7 @@ class TokenExchangeTest {
     @Test
     void resourceTokenWithoutAudIsRejected() {
         String tokenWithoutAud =
-                Jwts.signEdDsa(Map.of("alg", "EdDSA"), Map.of("iss", "https://resource.example"), psKeys.getPrivate());
+                Jwts.signEdDsa(Map.of("alg", "EdDSA"), Map.of("iss", "https://gateway.uma.lab"), psKeys.getPrivate());
 
         assertThatThrownBy(() -> TokenExchange.exchangeResourceToken(
                         TokenExchange.Exchange.builder(tokenWithoutAud, agentKeys, "agent.token.jwt")

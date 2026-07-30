@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 
 class DeferredResponsesTest {
 
-    private static final String PENDING_URL = "https://ps.example/pending/abc123";
+    private static final String PENDING_URL = "https://ps.uma.lab/pending/abc123";
 
     @Test
     void generatesPendingIdsAndInteractionCodes() {
@@ -40,7 +40,7 @@ class DeferredResponsesTest {
                 DeferredResponses.buildPendingResponseHeaders(DeferredResponses.PendingSpec.builder(PENDING_URL)
                         .require("interaction")
                         .code("ABCD1234")
-                        .url("https://ps.example/interact")
+                        .url("https://ps.uma.lab/interact")
                         .retryAfter(3)
                         .build());
         assertThat(interaction)
@@ -49,7 +49,7 @@ class DeferredResponsesTest {
                 .containsEntry("Cache-Control", "no-store")
                 .containsEntry(
                         "AAuth-Requirement",
-                        "requirement=interaction; url=\"https://ps.example/interact\"; code=\"ABCD1234\"");
+                        "requirement=interaction; url=\"https://ps.uma.lab/interact\"; code=\"ABCD1234\"");
 
         assertThat(DeferredResponses.buildPendingResponseHeaders(DeferredResponses.PendingSpec.builder(PENDING_URL)
                         .require("approval")

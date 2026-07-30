@@ -14,14 +14,14 @@ import org.junit.jupiter.api.Test;
 
 class AgentRoleTest {
 
-    private static final String TARGET = "https://resource.example/api";
+    private static final String TARGET = "https://gateway.uma.lab/api";
 
     private final KeyPair keyPair = KeyPairs.generateEd25519();
 
     @Test
     void signsWithEachScheme() {
         AgentRequestSigner signer = AgentRequestSigner.builder(keyPair)
-                .agentId("https://agent.example")
+                .agentId("https://portal.uma.lab")
                 .agentToken("aaa.bbb.ccc")
                 .build();
 
@@ -32,7 +32,7 @@ class AgentRoleTest {
         SignatureKeyHeader.Parsed parsedJwksUri = SignatureKeyHeader.parse(jwksUri.get("Signature-Key"));
         assertThat(parsedJwksUri.scheme()).isEqualTo("jwks_uri");
         assertThat(parsedJwksUri.params())
-                .containsEntry("id", "https://agent.example")
+                .containsEntry("id", "https://portal.uma.lab")
                 .containsEntry("dwk", "aauth-agent.json")
                 .containsEntry("kid", "key-1");
 

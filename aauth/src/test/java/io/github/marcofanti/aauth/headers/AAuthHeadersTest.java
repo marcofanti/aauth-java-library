@@ -25,8 +25,8 @@ class AAuthHeadersTest {
     void buildsAAuthRequirementLevels() {
         assertThat(AAuthHeaders.buildAuthTokenRequirement("rt.jwt.value"))
                 .isEqualTo("requirement=auth-token; resource-token=\"rt.jwt.value\"");
-        assertThat(AAuthHeaders.buildInteractionRequirement("https://ps.example/interact", "ABCD1234"))
-                .isEqualTo("requirement=interaction; url=\"https://ps.example/interact\"; code=\"ABCD1234\"");
+        assertThat(AAuthHeaders.buildInteractionRequirement("https://ps.uma.lab/interact", "ABCD1234"))
+                .isEqualTo("requirement=interaction; url=\"https://ps.uma.lab/interact\"; code=\"ABCD1234\"");
         assertThat(AAuthHeaders.buildApprovalRequirement()).isEqualTo("requirement=approval");
         assertThat(AAuthHeaders.buildClarificationRequirement()).isEqualTo("requirement=clarification");
         assertThat(AAuthHeaders.buildClaimsRequirement()).isEqualTo("requirement=claims");
@@ -61,21 +61,21 @@ class AAuthHeadersTest {
     @Test
     void parsesInteractionChallenge() {
         AAuthHeaders.ParsedChallenge parsed = AAuthHeaders.parseAAuthHeader(
-                "requirement=interaction; url=\"https://ps.example/i\"; code=\"XYZ12345\"");
+                "requirement=interaction; url=\"https://ps.uma.lab/i\"; code=\"XYZ12345\"");
 
         assertThat(parsed.requirement()).isEqualTo("interaction");
-        assertThat(parsed.url()).isEqualTo("https://ps.example/i");
+        assertThat(parsed.url()).isEqualTo("https://ps.uma.lab/i");
         assertThat(parsed.code()).isEqualTo("XYZ12345");
     }
 
     @Test
     void parsesLegacyRequireFormat() {
         AAuthHeaders.ParsedChallenge parsed = AAuthHeaders.parseAAuthHeader(
-                "require=auth-token; resource-token=\"rt\"; auth-server=\"https://auth.example\"");
+                "require=auth-token; resource-token=\"rt\"; auth-server=\"https://alice-as.uma.lab\"");
 
         assertThat(parsed.requirement()).isEqualTo("auth-token");
         assertThat(parsed.resourceToken()).isEqualTo("rt");
-        assertThat(parsed.authServer()).isEqualTo("https://auth.example");
+        assertThat(parsed.authServer()).isEqualTo("https://alice-as.uma.lab");
     }
 
     @Test
@@ -189,15 +189,15 @@ class AAuthHeadersTest {
 
     @Test
     void missionHeaderRoundTripsAndAcceptsLegacyManager() {
-        String header = AAuthHeaders.buildMissionHeader("https://ps.example", "abc123");
-        assertThat(header).isEqualTo("approver=\"https://ps.example\"; s256=\"abc123\"");
+        String header = AAuthHeaders.buildMissionHeader("https://ps.uma.lab", "abc123");
+        assertThat(header).isEqualTo("approver=\"https://ps.uma.lab\"; s256=\"abc123\"");
 
         AAuthHeaders.Mission mission = AAuthHeaders.parseMissionHeader(header);
-        assertThat(mission.approver()).isEqualTo("https://ps.example");
+        assertThat(mission.approver()).isEqualTo("https://ps.uma.lab");
         assertThat(mission.s256()).isEqualTo("abc123");
 
-        assertThat(AAuthHeaders.parseMissionHeader("manager=\"https://old.example\"; s256=\"x\"")
+        assertThat(AAuthHeaders.parseMissionHeader("manager=\"https://grafana.uma.lab\"; s256=\"x\"")
                         .approver())
-                .isEqualTo("https://old.example");
+                .isEqualTo("https://grafana.uma.lab");
     }
 }
