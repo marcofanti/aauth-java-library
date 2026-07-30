@@ -37,8 +37,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>17</maven.compiler.release>
 
-    <nimbus-jose-jwt.version>10.3</nimbus-jose-jwt.version>
-    <structured-fields.version>0.4</structured-fields.version>
     <jackson.version>2.19.0</jackson.version>
     <junit.version>6.1.2</junit.version>
     <assertj.version>3.27.7</assertj.version>
@@ -56,16 +54,6 @@
         <groupId>io.github.marcofanti</groupId>
         <artifactId>aauth-signing</artifactId>
         <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>com.nimbusds</groupId>
-        <artifactId>nimbus-jose-jwt</artifactId>
-        <version>${nimbus-jose-jwt.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.greenbytes.http</groupId>
-        <artifactId>structured-fields</artifactId>
-        <version>${structured-fields.version}</version>
       </dependency>
       <dependency>
         <groupId>com.fasterxml.jackson</groupId>
