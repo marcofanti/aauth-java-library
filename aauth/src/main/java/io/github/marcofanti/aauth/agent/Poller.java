@@ -245,12 +245,19 @@ public final class Poller {
         }
         String clarification = str(body.get("clarification"));
 
-        if ("interaction".equals(require) && code != null && request.onInteraction() != null && attempt == 0) {
+        if ("interaction".equals(require)
+                && code != null
+                && !code.isEmpty()
+                && request.onInteraction() != null
+                && attempt == 0) {
             request.onInteraction()
                     .accept(extractInteractionUrl(aauthRequirementHeader, code, request.pendingUrl()), code);
         }
 
-        if (clarification != null && request.onClarification() != null && request.signedPost() != null) {
+        if (clarification != null
+                && !clarification.isEmpty()
+                && request.onClarification() != null
+                && request.signedPost() != null) {
             String answer = request.onClarification().apply(request.pendingUrl(), clarification);
             if (answer != null && !answer.isEmpty()) {
                 try {

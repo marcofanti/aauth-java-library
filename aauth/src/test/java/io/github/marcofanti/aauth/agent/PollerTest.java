@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test;
 
 class PollerTest {
 
-    private static final String PENDING_URL = "https://ps.example/pending/1";
+    private static final String PENDING_URL = "https://ps.uma.lab/pending/1";
 
     /** Serves a scripted sequence of responses. */
     private static Poller.SignedGet script(Deque<Poller.PollResponse> responses) {
@@ -100,7 +100,7 @@ class PollerTest {
                         Map.of("status", "pending", "requirement", "interaction", "code", "ABCD1234"),
                         Map.of(
                                 "AAuth-Requirement",
-                                "requirement=interaction; url=\"https://ps.example/interact\"; code=\"ABCD1234\"",
+                                "requirement=interaction; url=\"https://ps.uma.lab/interact\"; code=\"ABCD1234\"",
                                 "Retry-After",
                                 "0")),
                 new Poller.PollResponse(200, Map.of("auth_token", "tok"), Map.of())));
@@ -113,7 +113,7 @@ class PollerTest {
                 .build());
 
         assertThat(result.success()).isTrue();
-        assertThat(seenUrl.get()).isEqualTo("https://ps.example/interact?code=ABCD1234");
+        assertThat(seenUrl.get()).isEqualTo("https://ps.uma.lab/interact?code=ABCD1234");
         assertThat(seenCode.get()).isEqualTo("ABCD1234");
     }
 
@@ -140,6 +140,31 @@ class PollerTest {
 
         assertThat(result.success()).isTrue();
         assertThat(posted).containsExactly(Map.of("clarification_response", "Checking"));
+    }
+
+    @Test
+    void emptyCodeOrClarificationDoesNotFireCallbacks() {
+        // Regression: falsy-but-present values must not trigger user-facing callbacks.
+        Deque<Poller.PollResponse> responses = new ArrayDeque<>(List.of(
+                new Poller.PollResponse(
+                        202,
+                        Map.of("status", "pending", "requirement", "interaction", "code", "", "clarification", ""),
+                        Map.of("Retry-After", "0")),
+                new Poller.PollResponse(200, Map.of("auth_token", "tok"), Map.of())));
+
+        Poller.PollingResult result = Poller.poll(request(responses, new ArrayList<>())
+                .onInteraction((url, code) -> {
+                    throw new AssertionError("onInteraction must not fire for empty code");
+                })
+                .onClarification((url, question) -> {
+                    throw new AssertionError("onClarification must not fire for empty question");
+                })
+                .signedPost((url, body) -> {
+                    throw new AssertionError("no clarification POST expected");
+                })
+                .build());
+
+        assertThat(result.success()).isTrue();
     }
 
     @Test
@@ -198,7 +223,9 @@ class PollerTest {
         assertThat(Poller.extractInteractionUrl("requirement=approval", "C", PENDING_URL))
                 .isEqualTo(PENDING_URL);
         assertThat(Poller.extractInteractionUrl(
-                        "requirement=interaction; url=\"https://x.example/i?a=1\"; code=\"C\"", "C", PENDING_URL))
-                .isEqualTo("https://x.example/i?a=1&code=C");
+                        "requirement=interaction; url=\"https://keycloak.uma.lab/i?a=1\"; code=\"C\"",
+                        "C",
+                        PENDING_URL))
+                .isEqualTo("https://keycloak.uma.lab/i?a=1&code=C");
     }
 }

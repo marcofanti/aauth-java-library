@@ -73,8 +73,8 @@ public final class Identifiers {
      * Derives an {@code aauth:} identifier from an agent server URL.
      *
      * <p>URLs with a port (localhost demos) get the port appended to the local part so multiple
-     * participants on one host stay distinct: {@code http://127.0.0.1:8001} →
-     * {@code aauth:agent-8001@127.0.0.1}.
+     * participants on one host stay distinct: {@code http://ps.uma.lab:8001} →
+     * {@code aauth:agent-8001@ps.uma.lab}.
      */
     public static String agentIdentifierFromServerUrl(String serverUrl, String local) {
         URI uri = URI.create(serverUrl);
@@ -117,7 +117,7 @@ public final class Identifiers {
         if (url.endsWith("/")) {
             throw new IllegalArgumentException("Server identifier must not include a trailing slash: " + url);
         }
-        if (!url.equals(url.toLowerCase())) {
+        if (!url.equals(url.toLowerCase(java.util.Locale.ROOT))) {
             throw new IllegalArgumentException("Server identifier must be lowercase: " + url);
         }
         return url;

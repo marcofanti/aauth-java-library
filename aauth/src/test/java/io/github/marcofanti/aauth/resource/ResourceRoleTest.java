@@ -19,17 +19,17 @@ import org.junit.jupiter.api.Test;
 /** Resource-role tests, including the full challenge → sign → verify protocol loop. */
 class ResourceRoleTest {
 
-    private static final String RESOURCE_ID = "https://resource.example";
-    private static final String AUTH_SERVER = "https://auth.example";
-    private static final String AGENT_ID = "aauth:agent@agent.example";
-    private static final String TARGET = "https://resource.example/api/data";
+    private static final String RESOURCE_ID = "https://gateway.uma.lab";
+    private static final String AUTH_SERVER = "https://alice-as.uma.lab";
+    private static final String AGENT_ID = "aauth:agent@portal.uma.lab";
+    private static final String TARGET = "https://gateway.uma.lab/api/data";
 
     private final KeyPair resourceKeys = KeyPairs.generateEd25519();
     private final KeyPair agentKeys = KeyPairs.generateEd25519();
     private final KeyPair authServerKeys = KeyPairs.generateEd25519();
 
-    private final RequestVerifier verifier = new RequestVerifier(List.of("resource.example"), (id, dwk, kid) -> {
-        if ("https://agent.example".equals(id)) {
+    private final RequestVerifier verifier = new RequestVerifier(List.of("gateway.uma.lab"), (id, dwk, kid) -> {
+        if ("https://portal.uma.lab".equals(id)) {
             return Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(agentKeys.getPublic(), "key-1")));
         }
         if (AUTH_SERVER.equals(id)) {
@@ -56,7 +56,7 @@ class ResourceRoleTest {
     @Test
     void identityRequestCarriesAgentIdFromJwksUriScheme() {
         AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys)
-                .agentId("https://agent.example")
+                .agentId("https://portal.uma.lab")
                 .build();
         Map<String, String> headers =
                 withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwks_uri"));
@@ -64,7 +64,7 @@ class ResourceRoleTest {
         RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, true, false);
 
         assertThat(result.valid()).isTrue();
-        assertThat(result.agentId()).isEqualTo("https://agent.example");
+        assertThat(result.agentId()).isEqualTo("https://portal.uma.lab");
     }
 
     @Test
@@ -113,6 +113,51 @@ class ResourceRoleTest {
     }
 
     @Test
+    void emptyScopeClaimDoesNotSatisfyAuthTokenRequirement() {
+        // Regression: a validly signed auth token with scope "" must not pass requireAuthToken.
+        Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
+        Map<String, Object> header =
+                new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "EdDSA", "kid", "as-key-1"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("iss", AUTH_SERVER);
+        payload.put("agent", AGENT_ID);
+        payload.put("cnf", Map.of("jwk", agentJwk));
+        payload.put("scope", "  ");
+        payload.put("exp", java.time.Instant.now().getEpochSecond() + 300);
+        String emptyScopeToken =
+                io.github.marcofanti.aauth.signing.Jwts.signEdDsa(header, payload, authServerKeys.getPrivate());
+
+        AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys)
+                .agentToken(emptyScopeToken)
+                .build();
+        Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwt"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, false, true);
+
+        assertThat(result.valid()).isFalse();
+        assertThat(result.error()).contains("Auth token required");
+    }
+
+    @Test
+    void scopeSplittingCollapsesWhitespace() {
+        Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
+        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, AGENT_ID)
+                .cnfJwk(agentJwk)
+                .signingKey(authServerKeys.getPrivate(), "as-key-1")
+                .act(Map.of("sub", AGENT_ID))
+                .scope("data.read  data.write")
+                .build());
+        AgentRequestSigner signer =
+                AgentRequestSigner.builder(agentKeys).agentToken(authToken).build();
+        Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwt"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, false, true);
+
+        assertThat(result.valid()).isTrue();
+        assertThat(result.scopes()).containsExactly("data.read", "data.write");
+    }
+
+    @Test
     void missingSignatureHeadersFailCleanly() {
         RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, Map.of(), null, false, false);
 
@@ -123,7 +168,7 @@ class ResourceRoleTest {
     @Test
     void unknownAuthorityIsRejected() {
         AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();
-        String otherTarget = "https://other.example/api";
+        String otherTarget = "https://grafana.uma.lab/api";
         Map<String, String> headers =
                 withSignatureHeaders(signer.signRequest("GET", otherTarget, Map.of(), null, "hwk"));
 

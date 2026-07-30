@@ -110,8 +110,10 @@ public final class RequestVerifier {
                             userSub = jwt.claim("sub");
                             act = jwt.payload().get("act") instanceof Map<?, ?> actMap ? castMap(actMap) : null;
                             String scope = jwt.claim("scope");
-                            if (scope != null) {
-                                scopes = List.of(scope.split(" "));
+                            // Whitespace-collapsing split, matching Python's str.split(); an
+                            // empty or blank scope claim yields no scopes at all.
+                            if (scope != null && !scope.isBlank()) {
+                                scopes = List.of(scope.strip().split("\\s+"));
                             }
                         }
                     } catch (IllegalArgumentException e) {
@@ -127,7 +129,7 @@ public final class RequestVerifier {
         if (requireIdentity && agentId == null) {
             return Result.failure("Agent identity required but not present");
         }
-        if (requireAuthToken && scopes == null) {
+        if (requireAuthToken && (scopes == null || scopes.isEmpty())) {
             return Result.failure("Auth token required but not present");
         }
 

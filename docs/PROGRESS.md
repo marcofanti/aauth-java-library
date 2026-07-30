@@ -34,6 +34,34 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 - **2026-07-30 — JUnit 6.1.2**: current stable line; validated with a toolchain smoke test
   in phase 1.
 
+## Final review (2026-07-30)
+
+A security-focused review (java-reviewer agent) of the finished port found 4 issues, all fixed
+with regression tests in the same session:
+
+1. **HIGH** — `RequestVerifier` accepted an empty/whitespace `scope` claim as satisfying
+   `requireAuthToken` (Python's truthiness check rejects it). Fixed: blank scopes yield no
+   scope list, and the gate now rejects empty lists.
+2. **MEDIUM** — `Poller` fired interaction/clarification callbacks on empty-string
+   `code`/`clarification` values where Python skips them. Fixed with non-empty checks.
+3. **LOW** — `Identifiers` lowercase check used the default locale; now `Locale.ROOT`.
+4. **LOW** — scope splitting used single-space split; now whitespace-collapsing
+   (`strip().split("\\s+")`), matching Python's `str.split()`.
+
+All crypto/verification paths (signature schemes, token verification order, Ed25519 point
+encoding, P1363/DER handling, JWKS discovery) were confirmed equivalent to the Python
+reference with no findings.
+
+## Test fixtures
+
+Per user request (2026-07-30), test fixtures and examples use the local UMA lab hostnames
+instead of `localhost`/`*.example`: `gateway.uma.lab` (resource), `alice-as.uma.lab` (auth
+server), `ps.uma.lab` (person server), `portal.uma.lab` (agent server), `grafana.uma.lab` /
+`keycloak.uma.lab` (miscellaneous). These resolve to 127.0.0.1 on this machine, so the
+live-socket tests (JDK HttpServer) bind locally and use the lab names in URLs. The single
+`http://localhost:8080` in `MetadataTest` is intentional — it tests the spec's
+localhost-only HTTP carve-out itself.
+
 ## Deviations from the Python library
 
 - **Signature header base64 flavor preserved**: the Python library base64url-encodes the
