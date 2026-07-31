@@ -1,5 +1,7 @@
 # aauth-java-library
 
+[![CI](https://github.com/marcofanti/aauth-java-library/actions/workflows/ci.yml/badge.svg)](https://github.com/marcofanti/aauth-java-library/actions/workflows/ci.yml)
+
 Java implementation of the [AAuth protocol](https://github.com/dickhardt/AAuth) — an
 authorization protocol for agent-to-resource access built on HTTP Message Signatures
 (RFC 9421) and JWT-based proof-of-possession tokens.

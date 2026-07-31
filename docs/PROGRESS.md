@@ -52,6 +52,18 @@ All crypto/verification paths (signature schemes, token verification order, Ed25
 encoding, P1363/DER handling, JWKS discovery) were confirmed equivalent to the Python
 reference with no findings.
 
+## Post-completion (2026-07-30, after initial push)
+
+- Repo published at https://github.com/marcofanti/aauth-java-library (pushed by the user).
+- **CI added** (PR #1): GitHub Actions workflow running `mvn verify` on JDK 26 (Temurin),
+  actions SHA-pinned, `persist-credentials: false`, read-only permissions; validated with
+  actionlint and zizmor. Interop tests self-skip in CI (no Python checkout).
+- **prek hooks added**: whitespace/EOF/YAML/merge-conflict/large-file checks + local
+  `spotless:check`; installed via `prek install`.
+- **CI portability fix**: live-socket tests resolve `*.uma.lab` hostnames only when they map
+  to loopback (see `TestHosts`); CI runners fall back to `127.0.0.1`. First CI run failed on
+  unresolvable lab hostnames; second run green.
+
 ## Test fixtures
 
 Per user request (2026-07-30), test fixtures and examples use the local UMA lab hostnames

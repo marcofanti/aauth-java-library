@@ -16,6 +16,9 @@ implementation — mirror its behavior, module split, and README structure.
 - JDK 26 target (`--release 26`); Java 26+ required (user decision 2026-07-30).
 - Build: `mvn verify` (runs tests, JaCoCo 80% line-coverage gate, Spotless check).
 - Format: `mvn spotless:apply` (Palantir Java Format) before committing.
+- Hooks: prek is installed (`prek run` runs whitespace/YAML checks + spotless:check).
+- Remote: https://github.com/marcofanti/aauth-java-library — never push directly to main;
+  use feature branches and PRs. CI runs `mvn verify` on JDK 26.
 - Zero warnings: compiler runs `-Xlint:all,-serial,-processing -Werror`.
 - Immutable value types (records) for parsed headers, claims, results.
 - No framework dependencies in the core; HTTP via JDK `java.net.http` behind interfaces.

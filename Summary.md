@@ -1,6 +1,6 @@
 # aauth-java-library
 
-**Source:** authored locally (not a clone) — port of https://github.com/christian-posta/aauth-python-library
+**Source:** https://github.com/marcofanti/aauth-java-library (authored locally) — port of https://github.com/christian-posta/aauth-python-library
 **Stack:** Java 26, Maven multi-module (io.github.marcofanti:aauth-signing, io.github.marcofanti:aauth)
 
 Java implementation of the AAuth protocol (github.com/dickhardt/AAuth) — agent-to-resource
