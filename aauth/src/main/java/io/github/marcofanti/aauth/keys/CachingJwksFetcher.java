@@ -27,7 +27,10 @@ public final class CachingJwksFetcher {
     private final Clock clock;
     private final ConcurrentHashMap<String, Long> lastFetchTimes = new ConcurrentHashMap<>();
 
-    /** Creates a fetcher with the JDK HTTP client, 1-hour cache TTL, 60-second rate limit. */
+    /**
+     * Creates a fetcher with the JDK HTTP client (pinned to HTTP/1.1 for h11-server
+     * compatibility — see {@link DefaultHttpClient}), 1-hour cache TTL, 60-second rate limit.
+     */
     public CachingJwksFetcher() {
         this(new DefaultHttpClient(), new JwksCache(), 60, Clock.systemUTC());
     }

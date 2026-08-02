@@ -158,6 +158,52 @@ class ResourceRoleTest {
     }
 
     @Test
+    void bodyWithMatchingContentDigestPasses() {
+        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        // The low-level signer covers content-digest via additionalComponents.
+        Map<String, String> headers = withSignatureHeaders(io.github.marcofanti.aauth.signing.RequestSigner.sign(
+                io.github.marcofanti.aauth.signing.SignRequest.builder("POST", TARGET)
+                        .keyPair(agentKeys)
+                        .scheme(new io.github.marcofanti.aauth.signing.SignatureScheme.Hwk())
+                        .body(body)
+                        .additionalComponents(List.of("content-digest"))
+                        .build()));
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
+
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void tamperedBodyWithIntactContentDigestIsRejected() {
+        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = withSignatureHeaders(io.github.marcofanti.aauth.signing.RequestSigner.sign(
+                io.github.marcofanti.aauth.signing.SignRequest.builder("POST", TARGET)
+                        .keyPair(agentKeys)
+                        .scheme(new io.github.marcofanti.aauth.signing.SignatureScheme.Hwk())
+                        .body(body)
+                        .additionalComponents(List.of("content-digest"))
+                        .build()));
+        byte[] tamperedBody = "{\"amount\": 999999}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, tamperedBody, false, false);
+
+        assertThat(result.valid()).isFalse();
+        assertThat(result.error()).isEqualTo("content-digest mismatch");
+    }
+
+    @Test
+    void bodyWithoutContentDigestHeaderIsUnaffected() {
+        AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();
+        byte[] body = "{\"note\": \"no digest coverage\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = withSignatureHeaders(signer.signRequest("POST", TARGET, Map.of(), body, "hwk"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
+
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
     void missingSignatureHeadersFailCleanly() {
         RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, Map.of(), null, false, false);
 

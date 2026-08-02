@@ -99,6 +99,9 @@ public final class Metadata {
     /**
      * Fetches a metadata document over HTTPS (HTTP allowed only for localhost development).
      *
+     * <p>When {@code httpClient} is {@code null}, the default client is pinned to HTTP/1.1 for
+     * h11-server compatibility — see {@link DefaultHttpClient}.
+     *
      * @throws IllegalArgumentException if the URL is non-HTTPS and not localhost
      * @throws MetadataException if the fetch fails
      */

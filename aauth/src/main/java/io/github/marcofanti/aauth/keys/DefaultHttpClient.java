@@ -11,7 +11,14 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Map;
 
-/** JDK {@link HttpClient}-based JSON fetcher with a 10-second timeout. */
+/**
+ * JDK {@link HttpClient}-based JSON fetcher with a 10-second timeout.
+ *
+ * <p>The default client is pinned to HTTP/1.1: the JDK's default HTTP/2 h2c upgrade breaks
+ * h11-based servers (uvicorn/FastAPI reject the request or silently drop the body), which AAuth
+ * person servers commonly run on. Inject a client via {@link #DefaultHttpClient(HttpClient)} to
+ * override.
+ */
 public final class DefaultHttpClient implements JsonHttpClient {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -21,9 +28,15 @@ public final class DefaultHttpClient implements JsonHttpClient {
 
     public DefaultHttpClient() {
         this(HttpClient.newBuilder()
+                .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(10))
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build());
+    }
+
+    /** The underlying client (exposed for configuration assertions). */
+    HttpClient httpClient() {
+        return httpClient;
     }
 
     public DefaultHttpClient(HttpClient httpClient) {
