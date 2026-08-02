@@ -68,6 +68,12 @@ reference with no findings.
   (sources/javadoc jars, GPG signing, central-publishing-maven-plugin). Manual steps
   (Portal signup, GPG key) documented in RELEASING.md. Normal builds unaffected.
 
+- **HTTP/1.1 pinned for library-constructed clients (2026-08-02)**: downstream use against
+  uvicorn/h11-based servers (the AAuth Person Server) showed the JDK HttpClient's default
+  h2c upgrade makes h11 reject requests (400) or silently drop POST bodies. Both
+  library-constructed defaults (`DefaultHttpClient`, `TokenExchange.Exchange`) now set
+  `HttpClient.Version.HTTP_1_1`; caller-injected clients are untouched.
+
 ## Test fixtures
 
 Per user request (2026-07-30), test fixtures and examples use the local UMA lab hostnames
@@ -80,6 +86,13 @@ localhost-only HTTP carve-out itself.
 
 ## Deviations from the Python library
 
+- **Content-Digest is enforced in the resource role (2026-08-02)**: both this library's
+  low-level `SignatureVerifier` and the Python reference only sign/verify the
+  `Content-Digest` *header*, so a tampered body with an intact header passes the HTTP
+  signature. `RequestVerifier.verifyRequest` now recomputes the RFC 9530 digest from the
+  body whenever both header and body are present and fails with
+  `content-digest mismatch` on divergence. The low-level `SignatureVerifier` is unchanged
+  for wire-format parity.
 - **Signature header base64 flavor preserved**: the Python library base64url-encodes the
   `Signature` header value (RFC 9421 §4.2 specifies sf-binary, i.e. standard base64).
   We mirror the Python behavior for interop; both parsers only accept the urlsafe alphabet.

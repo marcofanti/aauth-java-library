@@ -53,7 +53,9 @@ public final class TokenExchange {
      * @param resourceToken the resource token from the 401 challenge
      * @param keyPair the agent's signing key pair
      * @param agentJwt the agent token ({@code aa-agent+jwt}) for the Signature-Key header
-     * @param httpClient HTTP client; {@code null} uses a default with a 30s timeout
+     * @param httpClient HTTP client; {@code null} uses a default with a 30s timeout pinned to
+     *     HTTP/1.1 (the JDK's h2c upgrade breaks h11-based person servers such as
+     *     uvicorn/FastAPI). Caller-injected clients are used as-is.
      * @param onInteraction callback invoked with (interactionUrl, code) when the PS requires
      *     human interaction
      * @param onClarification callback invoked with (pendingUrl, question); returns the answer
@@ -76,6 +78,7 @@ public final class TokenExchange {
             }
             httpClient = httpClient == null
                     ? HttpClient.newBuilder()
+                            .version(HttpClient.Version.HTTP_1_1)
                             .connectTimeout(Duration.ofSeconds(30))
                             .build()
                     : httpClient;

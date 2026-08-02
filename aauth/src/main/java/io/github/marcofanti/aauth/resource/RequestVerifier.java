@@ -3,6 +3,7 @@ package io.github.marcofanti.aauth.resource;
 import io.github.marcofanti.aauth.signing.HttpSignatureException;
 import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.Jwts;
+import io.github.marcofanti.aauth.signing.SignatureBase;
 import io.github.marcofanti.aauth.signing.SignatureKeyHeader;
 import io.github.marcofanti.aauth.signing.SignatureVerifier;
 import io.github.marcofanti.aauth.signing.VerifyRequest;
@@ -41,6 +42,10 @@ public final class RequestVerifier {
 
     /**
      * Verifies an incoming request's HTTP signature and extracts identity/authorization context.
+     *
+     * <p>When the request carries both a {@code Content-Digest} header and a body, the digest is
+     * recomputed from the body per RFC 9530 and the request is rejected on mismatch — unlike the
+     * Python reference, which only signs/verifies the header value.
      *
      * @param method HTTP method
      * @param targetUri target URI as received
@@ -87,6 +92,17 @@ public final class RequestVerifier {
             }
         } catch (HttpSignatureException e) {
             return Result.failure(e.getMessage());
+        }
+
+        // RFC 9530 body-digest enforcement: the signature base covers the Content-Digest
+        // *header*, not the body itself, so a tampered body with an intact header would pass
+        // signature verification. Recompute whenever both header and body are present.
+        // Intentional divergence from the Python reference, which trusts the header.
+        String contentDigest = header(headers, "Content-Digest");
+        if (contentDigest != null && body != null && body.length > 0) {
+            if (!contentDigest.strip().equals(SignatureBase.contentDigest(body))) {
+                return Result.failure("content-digest mismatch");
+            }
         }
 
         String agentId = null;

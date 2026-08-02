@@ -69,6 +69,11 @@ request. Unlike the Python library, the caller's header map is never mutated.
 (plus `@query` when a query string is present). Body signing is opt-in via
 `additionalComponents(List.of("content-digest"))`.
 
+> **HTTP client defaults:** every HTTP client the library constructs itself (JWKS/metadata
+> fetching, token exchange) is pinned to **HTTP/1.1** — the JDK's default h2c upgrade breaks
+> h11-based servers (uvicorn/FastAPI person servers reject requests or drop bodies).
+> Clients you inject yourself are used as-is.
+
 ## Signature verification
 
 ```java
@@ -145,6 +150,9 @@ RequestVerifier.Result result = verifier.verifyRequest(
 if (result.valid()) {
     System.out.println("Agent: " + result.agentId() + ", Scopes: " + result.scopes());
 }
+// When a request carries both a Content-Digest header and a body, verifyRequest recomputes
+// the RFC 9530 digest from the body and rejects mismatches ("content-digest mismatch") —
+// stricter than the Python reference, which only verifies the header value.
 
 // Resource-side challenge building (401 responses)
 ChallengeBuilder challenges = new ChallengeBuilder(
