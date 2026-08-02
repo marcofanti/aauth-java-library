@@ -211,6 +211,7 @@ mvn test -pl aauth -am -Dtest=PythonInteropTest \
 - Reference implementation: [aauth-python-library](https://github.com/christian-posta/aauth-python-library)
 
 Implementation plan and progress log: [docs/PLAN.md](docs/PLAN.md), [docs/PROGRESS.md](docs/PROGRESS.md).
+Publishing to Maven Central: [RELEASING.md](RELEASING.md).
 
 ## License
 
