@@ -2,7 +2,7 @@
 
 The build is already wired for Central publishing (the `release` Maven profile adds sources
 and javadoc jars, GPG signing, and the Central Portal upload). Two one-time setup steps must
-be done by a human; after that, releases are a short procedure.
+be done by a human; after that, a release is one script run: `./release.sh <version>`.
 
 ## One-time setup
 
@@ -42,27 +42,28 @@ first signing of a session.
 
 ## Release procedure
 
+Run the release script from a clean, up-to-date `main`:
+
 ```bash
-# 1. Start from a green main
-git checkout main && git pull && mvn verify
-
-# 2. Set the release version (drop -SNAPSHOT) in all three POMs
-mvn versions:set -DnewVersion=0.1.0 && mvn versions:commit
-
-# 3. Commit and tag (via PR per repo convention, or directly if you prefer for releases)
-git commit -am "release: 0.1.0" && git tag v0.1.0
-
-# 4. Build, sign and upload to the Central Portal
-mvn clean deploy -Prelease
-
-# 5. Publish: the artifacts land in https://central.sonatype.com/publishing as a
-#    validated deployment — press "Publish" there. (To skip the manual press, add
-#    <autoPublish>true</autoPublish> to the central-publishing-maven-plugin config.)
-
-# 6. Bump back to the next snapshot and push
-mvn versions:set -DnewVersion=0.2.0-SNAPSHOT && mvn versions:commit
-git commit -am "chore: bump to 0.2.0-SNAPSHOT" && git push && git push --tags
+./release.sh --dry-run 0.1.1   # preflight only: git state, credentials, GPG, mvn verify
+./release.sh 0.1.1             # the real thing
 ```
+
+The script does, in order:
+
+1. **Preflight** — verifies you're on a clean `main` in sync with origin, the `v0.1.1` tag
+   doesn't exist, `~/.m2/settings.xml` has real `central` credentials, GPG can actually
+   sign (fails early on the pinentry/`GPG_TTY` problem), and `mvn verify` is green.
+2. Sets the version in all three POMs, commits `release: 0.1.1`, tags `v0.1.1`.
+3. `mvn clean deploy -Prelease` — builds, signs, and uploads to the Central Portal.
+4. Bumps to the next snapshot (defaults to the next minor, e.g. `0.2.0-SNAPSHOT`; pass a
+   second argument to override), commits, and pushes `main` plus the tag.
+5. Prints the last manual step: press **Publish** on the validated deployment at
+   <https://central.sonatype.com/publishing>. (To skip the manual press, add
+   `<autoPublish>true</autoPublish>` to the central-publishing-maven-plugin config.)
+
+If anything fails before the push, nothing has left your machine; the script prints the
+two-line local rollback (`git tag -d`, `git reset --hard origin/main`).
 
 Artifacts appear on Maven Central (search.maven.org) within an hour of publishing:
 
@@ -70,7 +71,7 @@ Artifacts appear on Maven Central (search.maven.org) within an hour of publishin
 <dependency>
   <groupId>io.github.marcofanti</groupId>
   <artifactId>aauth</artifactId>          <!-- or aauth-signing for the signing layer only -->
-  <version>0.1.0</version>
+  <version>0.1.1</version>
 </dependency>
 ```
 
