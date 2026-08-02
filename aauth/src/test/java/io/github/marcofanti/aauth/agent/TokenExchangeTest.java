@@ -32,7 +32,8 @@ class TokenExchangeTest {
     void startServer() throws Exception {
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.start();
-        base = "http://ps.uma.lab:" + server.getAddress().getPort();
+        base = "http://" + io.github.marcofanti.aauth.TestHosts.loopbackHost("ps.uma.lab") + ":"
+                + server.getAddress().getPort();
     }
 
     @AfterEach

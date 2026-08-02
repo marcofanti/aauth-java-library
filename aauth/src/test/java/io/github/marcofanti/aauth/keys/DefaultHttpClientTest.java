@@ -38,7 +38,8 @@ class DefaultHttpClientTest {
             }
         });
         server.start();
-        baseUrl = "http://grafana.uma.lab:" + server.getAddress().getPort();
+        baseUrl = "http://" + io.github.marcofanti.aauth.TestHosts.loopbackHost("grafana.uma.lab") + ":"
+                + server.getAddress().getPort();
     }
 
     @AfterAll
