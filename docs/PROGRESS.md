@@ -64,6 +64,10 @@ reference with no findings.
   to loopback (see `TestHosts`); CI runners fall back to `127.0.0.1`. First CI run failed on
   unresolvable lab hostnames; second run green.
 
+- **Maven Central plumbing added (2026-08-02)**: `<scm>` metadata plus a `release` profile
+  (sources/javadoc jars, GPG signing, central-publishing-maven-plugin). Manual steps
+  (Portal signup, GPG key) documented in RELEASING.md. Normal builds unaffected.
+
 ## Test fixtures
 
 Per user request (2026-07-30), test fixtures and examples use the local UMA lab hostnames

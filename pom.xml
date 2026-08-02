@@ -28,6 +28,13 @@
     </developer>
   </developers>
 
+  <scm>
+    <connection>scm:git:https://github.com/marcofanti/aauth-java-library.git</connection>
+    <developerConnection>scm:git:git@github.com:marcofanti/aauth-java-library.git</developerConnection>
+    <url>https://github.com/marcofanti/aauth-java-library</url>
+    <tag>HEAD</tag>
+  </scm>
+
   <modules>
     <module>aauth-signing</module>
     <module>aauth</module>
@@ -42,6 +49,10 @@
     <assertj.version>3.27.7</assertj.version>
 
     <maven-compiler-plugin.version>3.15.0</maven-compiler-plugin.version>
+    <maven-source-plugin.version>3.4.0</maven-source-plugin.version>
+    <maven-javadoc-plugin.version>3.12.0</maven-javadoc-plugin.version>
+    <maven-gpg-plugin.version>3.2.8</maven-gpg-plugin.version>
+    <central-publishing-maven-plugin.version>0.11.0</central-publishing-maven-plugin.version>
     <maven-surefire-plugin.version>3.5.6</maven-surefire-plugin.version>
     <maven-enforcer-plugin.version>3.6.3</maven-enforcer-plugin.version>
     <jacoco-maven-plugin.version>0.8.15</jacoco-maven-plugin.version>
@@ -201,4 +212,73 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Maven Central release: sources + javadoc jars, GPG signing, Central Portal upload.
+         See RELEASING.md for the one-time account/key setup and the release procedure. -->
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <version>${maven-source-plugin.version}</version>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar-no-fork</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <version>${maven-javadoc-plugin.version}</version>
+            <configuration>
+              <doclint>all,-missing</doclint>
+            </configuration>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-gpg-plugin</artifactId>
+            <version>${maven-gpg-plugin.version}</version>
+            <executions>
+              <execution>
+                <id>sign-artifacts</id>
+                <phase>verify</phase>
+                <goals>
+                  <goal>sign</goal>
+                </goals>
+                <configuration>
+                  <!-- Prompting is impossible in CI/agent runs; use gpg-agent or a passphrase
+                       from settings.xml. -->
+                  <bestPractices>true</bestPractices>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.sonatype.central</groupId>
+            <artifactId>central-publishing-maven-plugin</artifactId>
+            <version>${central-publishing-maven-plugin.version}</version>
+            <extensions>true</extensions>
+            <configuration>
+              <publishingServerId>central</publishingServerId>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>
