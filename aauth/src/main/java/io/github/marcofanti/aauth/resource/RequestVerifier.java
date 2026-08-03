@@ -100,8 +100,16 @@ public final class RequestVerifier {
         // Intentional divergence from the Python reference, which trusts the header.
         String contentDigest = header(headers, "Content-Digest");
         if (contentDigest != null && body != null && body.length > 0) {
-            if (!contentDigest.strip().equals(SignatureBase.contentDigest(body))) {
-                return Result.failure("content-digest mismatch");
+            switch (SignatureBase.verifyContentDigest(contentDigest, body)) {
+                case MISMATCH -> {
+                    return Result.failure("content-digest mismatch");
+                }
+                case NO_SUPPORTED_ALGORITHM -> {
+                    return Result.failure("unsupported content-digest algorithm");
+                }
+                case MATCH -> {
+                    // Body integrity confirmed.
+                }
             }
         }
 

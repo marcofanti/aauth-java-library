@@ -192,6 +192,43 @@ class ResourceRoleTest {
         assertThat(result.error()).isEqualTo("content-digest mismatch");
     }
 
+    private Map<String, String> signedWithProvidedDigest(byte[] body, String contentDigest) {
+        // The signer returns only headers it adds, so a caller-supplied Content-Digest must be
+        // merged back into the wire headers alongside the signature headers.
+        Map<String, String> headers = withSignatureHeaders(io.github.marcofanti.aauth.signing.RequestSigner.sign(
+                io.github.marcofanti.aauth.signing.SignRequest.builder("POST", TARGET)
+                        .keyPair(agentKeys)
+                        .scheme(new io.github.marcofanti.aauth.signing.SignatureScheme.Hwk())
+                        .body(body)
+                        .headers(Map.of("Content-Digest", contentDigest))
+                        .additionalComponents(List.of("content-digest"))
+                        .build()));
+        headers.put("Content-Digest", contentDigest);
+        return headers;
+    }
+
+    @Test
+    void sha512ContentDigestIsAccepted() {
+        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = signedWithProvidedDigest(
+                body, io.github.marcofanti.aauth.signing.SignatureBase.contentDigest(body, "sha-512"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
+
+        assertThat(result.valid()).isTrue();
+    }
+
+    @Test
+    void unknownOnlyContentDigestAlgorithmIsRejected() {
+        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        Map<String, String> headers = signedWithProvidedDigest(body, "unixsum=:AAAA:");
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
+
+        assertThat(result.valid()).isFalse();
+        assertThat(result.error()).isEqualTo("unsupported content-digest algorithm");
+    }
+
     @Test
     void bodyWithoutContentDigestHeaderIsUnaffected() {
         AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();

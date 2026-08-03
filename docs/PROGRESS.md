@@ -92,7 +92,10 @@ localhost-only HTTP carve-out itself.
   signature. `RequestVerifier.verifyRequest` now recomputes the RFC 9530 digest from the
   body whenever both header and body are present and fails with
   `content-digest mismatch` on divergence. The low-level `SignatureVerifier` is unchanged
-  for wire-format parity.
+  for wire-format parity. Since 2026-08-02 the check parses the header as an RFC 9530
+  dictionary: sha-256 and sha-512 are both verified (every recognized member must match),
+  and a header carrying only unrecognized algorithms fails with
+  `unsupported content-digest algorithm` (fail closed).
 - **Signature header base64 flavor preserved**: the Python library base64url-encodes the
   `Signature` header value (RFC 9421 §4.2 specifies sf-binary, i.e. standard base64).
   We mirror the Python behavior for interop; both parsers only accept the urlsafe alphabet.

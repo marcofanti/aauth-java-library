@@ -173,6 +173,40 @@ class SignatureBaseTest {
     }
 
     @Test
+    void contentDigestSupportsSha512Rfc9530Vector() {
+        byte[] body = "{\"hello\": \"world\"}".getBytes(StandardCharsets.UTF_8);
+        assertThat(SignatureBase.contentDigest(body, "sha-512"))
+                .isEqualTo("sha-512=:WZDPaVn/7XgHaAy8pmojAkGWoRx2UFChF41A2svX+TaPm"
+                        + "+AbwAgBWnrIiYllu7BNNyealdVLvRwEmTHWXvJwew==:");
+        assertThatThrownBy(() -> SignatureBase.contentDigest(body, "md5"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("md5");
+    }
+
+    @Test
+    void verifyContentDigestHandlesDictionaries() {
+        byte[] body = "{\"hello\": \"world\"}".getBytes(StandardCharsets.UTF_8);
+        String sha256 = SignatureBase.contentDigest(body);
+        String sha512 = SignatureBase.contentDigest(body, "sha-512");
+
+        assertThat(SignatureBase.verifyContentDigest(sha256, body)).isEqualTo(SignatureBase.DigestCheck.MATCH);
+        assertThat(SignatureBase.verifyContentDigest(sha512, body)).isEqualTo(SignatureBase.DigestCheck.MATCH);
+        assertThat(SignatureBase.verifyContentDigest(sha256 + ", " + sha512, body))
+                .isEqualTo(SignatureBase.DigestCheck.MATCH);
+
+        byte[] otherBody = "tampered".getBytes(StandardCharsets.UTF_8);
+        assertThat(SignatureBase.verifyContentDigest(sha256, otherBody)).isEqualTo(SignatureBase.DigestCheck.MISMATCH);
+        // One matching and one stale member: any recognized mismatch fails.
+        assertThat(SignatureBase.verifyContentDigest(SignatureBase.contentDigest(otherBody) + ", " + sha512, otherBody))
+                .isEqualTo(SignatureBase.DigestCheck.MISMATCH);
+
+        assertThat(SignatureBase.verifyContentDigest("unixsum=:AAAA:", body))
+                .isEqualTo(SignatureBase.DigestCheck.NO_SUPPORTED_ALGORITHM);
+        assertThat(SignatureBase.verifyContentDigest("garbage", body))
+                .isEqualTo(SignatureBase.DigestCheck.NO_SUPPORTED_ALGORITHM);
+    }
+
+    @Test
     void headerLookupIsCaseInsensitive() {
         String base = SignatureBase.build(
                 "POST",
