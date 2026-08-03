@@ -152,7 +152,8 @@ if (result.valid()) {
 }
 // When a request carries both a Content-Digest header and a body, verifyRequest recomputes
 // the RFC 9530 digest from the body and rejects mismatches ("content-digest mismatch") —
-// stricter than the Python reference, which only verifies the header value.
+// stricter than the Python reference, which only verifies the header value. sha-256 and
+// sha-512 are supported; headers with only unrecognized algorithms are rejected.
 
 // Resource-side challenge building (401 responses)
 ChallengeBuilder challenges = new ChallengeBuilder(

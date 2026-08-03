@@ -110,14 +110,70 @@ public final class SignatureBase {
         return List.copyOf(components);
     }
 
+    /** RFC 9530 digest algorithms this library recognizes, mapped to JDK digest names. */
+    private static final Map<String, String> DIGEST_ALGORITHMS = Map.of(
+            "sha-256", "SHA-256",
+            "sha-512", "SHA-512");
+
     /** Calculates the {@code Content-Digest} header value per RFC 9530 (sha-256). */
     public static String contentDigest(byte[] body) {
-        try {
-            byte[] digest = MessageDigest.getInstance("SHA-256").digest(body);
-            return "sha-256=:" + Base64.getEncoder().encodeToString(digest) + ":";
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException("JDK is missing SHA-256", e);
+        return contentDigest(body, "sha-256");
+    }
+
+    /**
+     * Calculates a {@code Content-Digest} header value per RFC 9530.
+     *
+     * @param algorithm RFC 9530 algorithm key: {@code sha-256} or {@code sha-512}
+     * @throws IllegalArgumentException for unsupported algorithms
+     */
+    public static String contentDigest(byte[] body, String algorithm) {
+        String jdkName = DIGEST_ALGORITHMS.get(algorithm);
+        if (jdkName == null) {
+            throw new IllegalArgumentException("Unsupported Content-Digest algorithm: " + algorithm);
         }
+        try {
+            byte[] digest = MessageDigest.getInstance(jdkName).digest(body);
+            return algorithm + "=:" + Base64.getEncoder().encodeToString(digest) + ":";
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("JDK is missing " + jdkName, e);
+        }
+    }
+
+    /** Outcome of checking a {@code Content-Digest} header against a body. */
+    public enum DigestCheck {
+        /** Every recognized algorithm in the header matches the body. */
+        MATCH,
+        /** A recognized algorithm is present but its digest does not match the body. */
+        MISMATCH,
+        /** The header carries no algorithm this library recognizes. */
+        NO_SUPPORTED_ALGORITHM
+    }
+
+    /**
+     * Verifies an RFC 9530 {@code Content-Digest} header against a body.
+     *
+     * <p>The header is a structured dictionary that may carry several algorithms
+     * (e.g. {@code sha-256=:...:, sha-512=:...:}). Every recognized member (sha-256, sha-512)
+     * is recomputed from the body; unrecognized members are ignored unless they are the only
+     * ones present.
+     */
+    public static DigestCheck verifyContentDigest(String headerValue, byte[] body) {
+        boolean sawSupported = false;
+        for (String member : headerValue.split(",")) {
+            int eq = member.indexOf('=');
+            if (eq == -1) {
+                continue;
+            }
+            String algorithm = member.substring(0, eq).strip();
+            if (!DIGEST_ALGORITHMS.containsKey(algorithm)) {
+                continue;
+            }
+            sawSupported = true;
+            if (!member.strip().equals(contentDigest(body, algorithm))) {
+                return DigestCheck.MISMATCH;
+            }
+        }
+        return sawSupported ? DigestCheck.MATCH : DigestCheck.NO_SUPPORTED_ALGORITHM;
     }
 
     private static String requireBodyHeader(Map<String, String> headers, byte[] body, String name) {
