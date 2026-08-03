@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@code Signature-Key} header building and parsing per draft-hardt-httpbis-signature-key.
@@ -39,7 +40,7 @@ public final class SignatureKeyHeader {
      *     otherwise
      * @throws IllegalArgumentException if required parameters are missing
      */
-    public static String build(SignatureScheme scheme, String label, PublicKey hwkPublicKey) {
+    public static String build(SignatureScheme scheme, String label, @Nullable PublicKey hwkPublicKey) {
         if (scheme instanceof SignatureScheme.Hwk) {
             if (hwkPublicKey == null) {
                 throw new IllegalArgumentException("scheme=hwk requires the signer's public key");

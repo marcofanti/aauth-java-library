@@ -3,6 +3,7 @@ package io.github.marcofanti.aauth.signing;
 import java.util.Base64;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@code Signature} header building and parsing (RFC 9421 §4.2).
@@ -28,7 +29,7 @@ public final class SignatureHeader {
      * @param expectedLabel when non-null, the label must match
      * @throws IllegalArgumentException if the format is invalid or the label does not match
      */
-    public static byte[] parse(String headerValue, String expectedLabel) {
+    public static byte[] parse(String headerValue, @Nullable String expectedLabel) {
         Matcher matcher = SIGNATURE_PATTERN.matcher(headerValue);
         if (!matcher.find()) {
             throw new IllegalArgumentException("Invalid Signature format: " + headerValue);

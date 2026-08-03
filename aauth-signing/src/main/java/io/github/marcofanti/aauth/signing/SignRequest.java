@@ -3,6 +3,7 @@ package io.github.marcofanti.aauth.signing;
 import java.security.KeyPair;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Parameters for {@link RequestSigner#sign(SignRequest)}.
@@ -17,15 +18,17 @@ import java.util.Map;
  *     {@code content-type} / {@code content-digest} are honored, and only when a body is present)
  * @param created signature creation time in Unix seconds; {@code null} uses the current time
  */
+// byte[] body is intentional: raw request bytes; record equality is never used.
+@SuppressWarnings("ArrayRecordComponent")
 public record SignRequest(
         String method,
         String targetUri,
         Map<String, String> headers,
-        byte[] body,
+        byte @Nullable [] body,
         KeyPair keyPair,
         SignatureScheme scheme,
         List<String> additionalComponents,
-        Long created) {
+        @Nullable Long created) {
 
     public SignRequest {
         if (method == null || method.isEmpty()) {
@@ -52,12 +55,12 @@ public record SignRequest(
     public static final class Builder {
         private final String method;
         private final String targetUri;
-        private Map<String, String> headers;
-        private byte[] body;
-        private KeyPair keyPair;
+        private @Nullable Map<String, String> headers;
+        private byte @Nullable [] body;
+        private @Nullable KeyPair keyPair;
         private SignatureScheme scheme = new SignatureScheme.Hwk();
-        private List<String> additionalComponents;
-        private Long created;
+        private @Nullable List<String> additionalComponents;
+        private @Nullable Long created;
 
         private Builder(String method, String targetUri) {
             this.method = method;
@@ -95,7 +98,18 @@ public record SignRequest(
         }
 
         public SignRequest build() {
-            return new SignRequest(method, targetUri, headers, body, keyPair, scheme, additionalComponents, created);
+            if (keyPair == null) {
+                throw new IllegalArgumentException("keyPair is required");
+            }
+            return new SignRequest(
+                    method,
+                    targetUri,
+                    headers == null ? Map.of() : headers,
+                    body,
+                    keyPair,
+                    scheme,
+                    additionalComponents == null ? List.of() : additionalComponents,
+                    created);
         }
     }
 }

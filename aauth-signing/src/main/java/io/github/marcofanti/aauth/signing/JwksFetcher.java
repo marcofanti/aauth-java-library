@@ -1,6 +1,7 @@
 package io.github.marcofanti.aauth.signing;
 
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Key discovery callback used by signature and token verification.
@@ -21,5 +22,6 @@ public interface JwksFetcher {
      * @param kid the key identifier being looked up (may be {@code null})
      * @return the JWKS document ({@code {"keys": [...]}}) or {@code null} when unavailable
      */
-    Map<String, Object> fetch(String id, String dwk, String kid);
+    @Nullable
+    Map<String, Object> fetch(String id, @Nullable String dwk, @Nullable String kid);
 }

@@ -21,6 +21,7 @@ import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * JWK (JSON Web Key) operations: conversion between {@link PublicKey} and JWK maps, RFC 7638
@@ -44,7 +45,7 @@ public final class Jwk {
      * @return JWK as an immutable ordered map
      * @throws IllegalArgumentException if the key type or curve is unsupported
      */
-    public static Map<String, Object> publicKeyToJwk(PublicKey publicKey, String kid) {
+    public static Map<String, Object> publicKeyToJwk(PublicKey publicKey, @Nullable String kid) {
         Map<String, Object> jwk = new LinkedHashMap<>();
         if (publicKey instanceof EdECPublicKey edKey) {
             jwk.put("kty", "OKP");
@@ -88,7 +89,7 @@ public final class Jwk {
                 if (!"Ed25519".equals(crv)) {
                     throw new IllegalArgumentException("Unsupported OKP curve: " + crv);
                 }
-                return ed25519FromRaw(B64URL_DECODER.decode(str(jwk, "x")));
+                return ed25519FromRaw(B64URL_DECODER.decode(requiredStr(jwk, "x")));
             }
             if ("EC".equals(kty)) {
                 String crv = str(jwk, "crv");
@@ -98,16 +99,16 @@ public final class Jwk {
                             case "P-384" -> "secp384r1";
                             default -> throw new IllegalArgumentException("Unsupported EC curve: " + crv);
                         };
-                BigInteger x = new BigInteger(1, B64URL_DECODER.decode(str(jwk, "x")));
-                BigInteger y = new BigInteger(1, B64URL_DECODER.decode(str(jwk, "y")));
+                BigInteger x = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "x")));
+                BigInteger y = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "y")));
                 AlgorithmParameters params = AlgorithmParameters.getInstance("EC");
                 params.init(new ECGenParameterSpec(curveName));
                 ECParameterSpec spec = params.getParameterSpec(ECParameterSpec.class);
                 return KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(new ECPoint(x, y), spec));
             }
             if ("RSA".equals(kty)) {
-                BigInteger n = new BigInteger(1, B64URL_DECODER.decode(str(jwk, "n")));
-                BigInteger e = new BigInteger(1, B64URL_DECODER.decode(str(jwk, "e")));
+                BigInteger n = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "n")));
+                BigInteger e = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "e")));
                 return KeyFactory.getInstance("RSA").generatePublic(new RSAPublicKeySpec(n, e));
             }
         } catch (GeneralSecurityException e) {
@@ -131,11 +132,12 @@ public final class Jwk {
      * @param hashAlgorithm a {@link MessageDigest} algorithm name, e.g. "SHA-256" or "SHA-512"
      */
     public static String thumbprint(Map<String, Object> jwk, String hashAlgorithm) {
-        String kty = str(jwk, "kty");
+        Object ktyValue = jwk.get("kty");
+        String kty = ktyValue == null ? "" : ktyValue.toString();
         // RFC 7638 §3.2: only the required members, lexicographically sorted. All values are
         // base64url or curve-name strings, so the canonical JSON can be assembled directly.
         String canonical =
-                switch (kty == null ? "" : kty) {
+                switch (kty) {
                     case "OKP", "EC" -> canonicalEcOrOkp(jwk, kty);
                     case "RSA" -> "{\"e\":\"" + str(jwk, "e") + "\",\"kty\":\"RSA\",\"n\":\"" + str(jwk, "n") + "\"}";
                     default -> throw new IllegalArgumentException("Unsupported kty for thumbprint: " + kty);
@@ -163,9 +165,17 @@ public final class Jwk {
         return sb.append('}').toString();
     }
 
-    private static String str(Map<String, Object> jwk, String key) {
+    private static @Nullable String str(Map<String, Object> jwk, String key) {
         Object value = jwk.get(key);
         return value == null ? null : value.toString();
+    }
+
+    private static String requiredStr(Map<String, Object> jwk, String key) {
+        Object value = jwk.get(key);
+        if (value == null) {
+            throw new IllegalArgumentException("JWK is missing required field: " + key);
+        }
+        return value.toString();
     }
 
     // --- Ed25519 point encoding (RFC 8032 §5.1.2): 32 bytes little-endian y, MSB = x parity ---

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * HTTP signature verification per RFC 9421 and draft-hardt-httpbis-signature-key.
@@ -102,7 +103,7 @@ public final class SignatureVerifier {
 
     // --- Scheme dispatch -------------------------------------------------------------------
 
-    private static PublicKey resolvePublicKey(VerifyRequest request, SignatureKeyHeader.Parsed signatureKey) {
+    private static @Nullable PublicKey resolvePublicKey(VerifyRequest request, SignatureKeyHeader.Parsed signatureKey) {
         Map<String, String> params = signatureKey.params();
         return switch (signatureKey.scheme()) {
             case "hwk" -> request.publicKey() != null ? request.publicKey() : hwkKey(params);
@@ -127,15 +128,16 @@ public final class SignatureVerifier {
     }
 
     /** SIG-KEY §3.5: JWKS URI discovery via {@code {id}/.well-known/{dwk}}. */
-    private static PublicKey jwksUriKey(VerifyRequest request, Map<String, String> params) {
-        if (request.jwksFetcher() == null) {
+    private static @Nullable PublicKey jwksUriKey(VerifyRequest request, Map<String, String> params) {
+        JwksFetcher fetcher = request.jwksFetcher();
+        if (fetcher == null) {
             throw new HttpSignatureException("scheme=jwks_uri requires jwksFetcher");
         }
         String id = requireParam(params, "id", "jwks_uri");
         String dwk = requireParam(params, "dwk", "jwks_uri");
         String kid = requireParam(params, "kid", "jwks_uri");
 
-        Map<String, Object> jwks = request.jwksFetcher().fetch(id, dwk, kid);
+        Map<String, Object> jwks = fetcher.fetch(id, dwk, kid);
         if (jwks == null) {
             return null;
         }
@@ -144,7 +146,7 @@ public final class SignatureVerifier {
     }
 
     /** SIG-KEY §3.4: self-issued key delegation from a hardware-backed enclave key. */
-    private static PublicKey jktJwtKey(Map<String, String> params, VerifyRequest request) {
+    private static @Nullable PublicKey jktJwtKey(Map<String, String> params, VerifyRequest request) {
         String token = params.get("jwt");
         if (token == null || token.isEmpty()) {
             return null;
@@ -157,6 +159,7 @@ public final class SignatureVerifier {
         }
 
         Object typ = jwt.header().get("typ");
+        @Nullable
         String hashAlgorithm =
                 switch (typ == null ? "" : typ.toString()) {
                     case "jkt-s256+jwt" -> "SHA-256";
@@ -206,8 +209,9 @@ public final class SignatureVerifier {
     }
 
     /** SIG-KEY §3.6: JWT confirmation key. Token-type validation belongs to the protocol layer. */
-    private static PublicKey jwtKey(VerifyRequest request, Map<String, String> params) {
-        if (request.jwksFetcher() == null) {
+    private static @Nullable PublicKey jwtKey(VerifyRequest request, Map<String, String> params) {
+        JwksFetcher fetcher = request.jwksFetcher();
+        if (fetcher == null) {
             throw new HttpSignatureException("scheme=jwt requires jwksFetcher");
         }
         String token = params.get("jwt");
@@ -242,7 +246,7 @@ public final class SignatureVerifier {
             return null;
         }
 
-        Map<String, Object> jwks = request.jwksFetcher().fetch(iss, dwk, kidHeader.toString());
+        Map<String, Object> jwks = fetcher.fetch(iss, dwk, kidHeader.toString());
         if (jwks == null) {
             return null;
         }
@@ -263,7 +267,7 @@ public final class SignatureVerifier {
         return confirmationKey(jwt);
     }
 
-    private static PublicKey confirmationKey(Jwts.Decoded jwt) {
+    private static @Nullable PublicKey confirmationKey(Jwts.Decoded jwt) {
         Object cnf = jwt.payload().get("cnf");
         if (cnf instanceof Map<?, ?> cnfMap && cnfMap.get("jwk") instanceof Map<?, ?> jwkMap) {
             try {
@@ -347,12 +351,12 @@ public final class SignatureVerifier {
 
     // --- Small helpers ---------------------------------------------------------------------
 
-    private static String labelOf(String headerValue) {
+    private static @Nullable String labelOf(String headerValue) {
         Matcher matcher = LABEL_PREFIX.matcher(headerValue);
         return matcher.lookingAt() ? matcher.group(1) : null;
     }
 
-    private static Map<String, Object> findKeyByKid(Map<String, Object> jwks, String kid) {
+    private static @Nullable Map<String, Object> findKeyByKid(Map<String, Object> jwks, String kid) {
         Object keys = jwks.get("keys");
         if (!(keys instanceof List<?> keyList)) {
             return null;

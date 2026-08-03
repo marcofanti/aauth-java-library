@@ -3,6 +3,7 @@ package io.github.marcofanti.aauth.signing;
 import java.security.PublicKey;
 import java.time.Clock;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Parameters for {@link SignatureVerifier#verify(VerifyRequest)}.
@@ -18,16 +19,18 @@ import java.util.Map;
  * @param jwksFetcher key discovery callback, required for {@code jwks_uri} / {@code jwt}
  * @param clock clock used for the created-timestamp window; defaults to the system clock
  */
+// byte[] body is intentional: raw request bytes; record equality is never used.
+@SuppressWarnings("ArrayRecordComponent")
 public record VerifyRequest(
         String method,
         String targetUri,
         Map<String, String> headers,
-        byte[] body,
+        byte @Nullable [] body,
         String signatureInput,
         String signature,
         String signatureKey,
-        PublicKey publicKey,
-        JwksFetcher jwksFetcher,
+        @Nullable PublicKey publicKey,
+        @Nullable JwksFetcher jwksFetcher,
         Clock clock) {
 
     public VerifyRequest {
@@ -50,14 +53,14 @@ public record VerifyRequest(
     public static final class Builder {
         private final String method;
         private final String targetUri;
-        private Map<String, String> headers;
-        private byte[] body;
-        private String signatureInput;
-        private String signature;
-        private String signatureKey;
-        private PublicKey publicKey;
-        private JwksFetcher jwksFetcher;
-        private Clock clock;
+        private @Nullable Map<String, String> headers;
+        private byte @Nullable [] body;
+        private @Nullable String signatureInput;
+        private @Nullable String signature;
+        private @Nullable String signatureKey;
+        private @Nullable PublicKey publicKey;
+        private @Nullable JwksFetcher jwksFetcher;
+        private @Nullable Clock clock;
 
         private Builder(String method, String targetUri) {
             this.method = method;
@@ -98,17 +101,21 @@ public record VerifyRequest(
         }
 
         public VerifyRequest build() {
+            if (signatureInput == null || signature == null || signatureKey == null) {
+                throw new IllegalArgumentException(
+                        "Signature-Input, Signature and Signature-Key header values are required");
+            }
             return new VerifyRequest(
                     method,
                     targetUri,
-                    headers,
+                    headers == null ? Map.of() : headers,
                     body,
                     signatureInput,
                     signature,
                     signatureKey,
                     publicKey,
                     jwksFetcher,
-                    clock);
+                    clock == null ? Clock.systemUTC() : clock);
         }
     }
 }

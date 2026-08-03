@@ -9,6 +9,8 @@ import java.util.Map;
  * @param headers response headers
  * @param body response body, or {@code null}
  */
+// byte[] body is intentional: raw HTTP bytes; record equality is never used.
+@SuppressWarnings("ArrayRecordComponent")
 public record AAuthResponse(int statusCode, Map<String, String> headers, byte[] body) {
 
     public AAuthResponse {
