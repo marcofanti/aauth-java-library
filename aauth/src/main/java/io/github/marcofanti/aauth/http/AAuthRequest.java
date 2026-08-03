@@ -15,6 +15,8 @@ import java.util.Map;
  * @param headers request headers
  * @param body request body, or {@code null}
  */
+// byte[] body is intentional: raw HTTP bytes; record equality is never used.
+@SuppressWarnings("ArrayRecordComponent")
 public record AAuthRequest(
         String method, String authority, String path, String query, Map<String, String> headers, byte[] body) {
 
@@ -25,7 +27,7 @@ public record AAuthRequest(
         if (authority == null || authority.isEmpty()) {
             throw new IllegalArgumentException("authority is required");
         }
-        method = method.toUpperCase();
+        method = method.toUpperCase(java.util.Locale.ROOT);
         path = path == null || path.isEmpty() ? "/" : path;
         headers = headers == null ? Map.of() : Map.copyOf(headers);
     }

@@ -1,6 +1,7 @@
 package io.github.marcofanti.aauth.signing;
 
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * HTTP signature validation or creation error.
@@ -17,11 +18,15 @@ public class HttpSignatureException extends AAuthException {
         this(message, null, null, null);
     }
 
-    public HttpSignatureException(String message, Throwable cause) {
+    public HttpSignatureException(String message, @Nullable Throwable cause) {
         this(message, null, null, cause);
     }
 
-    public HttpSignatureException(String message, String errorCode, Map<String, Object> details, Throwable cause) {
+    public HttpSignatureException(
+            String message,
+            @Nullable String errorCode,
+            @Nullable Map<String, Object> details,
+            @Nullable Throwable cause) {
         super(message, errorCode == null ? ERROR_INVALID_SIGNATURE : errorCode, details, cause);
     }
 }

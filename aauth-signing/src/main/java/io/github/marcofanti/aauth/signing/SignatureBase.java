@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /** Signature base construction for HTTP Message Signatures (RFC 9421 §2.5). */
 public final class SignatureBase {
@@ -31,9 +32,9 @@ public final class SignatureBase {
             String method,
             String authority,
             String path,
-            String query,
+            @Nullable String query,
             Map<String, String> headers,
-            byte[] body,
+            byte @Nullable [] body,
             String signatureKeyHeader,
             List<String> coveredComponents,
             String signatureParams) {
@@ -69,7 +70,7 @@ public final class SignatureBase {
                         default -> throw new IllegalArgumentException("Unknown component: " + component);
                     };
             base.append('"')
-                    .append(component.toLowerCase())
+                    .append(component.toLowerCase(java.util.Locale.ROOT))
                     .append("\": ")
                     .append(value)
                     .append('\n');
@@ -95,7 +96,10 @@ public final class SignatureBase {
      * @param includeAauthMission whether to append {@code aauth-mission}
      */
     public static List<String> determineCoveredComponents(
-            String query, byte[] body, List<String> additionalComponents, boolean includeAauthMission) {
+            @Nullable String query,
+            byte @Nullable [] body,
+            @Nullable List<String> additionalComponents,
+            boolean includeAauthMission) {
         List<String> components = new ArrayList<>(List.of("@method", "@authority", "@path"));
         if (query != null && !query.isEmpty()) {
             components.add("@query");
@@ -159,7 +163,7 @@ public final class SignatureBase {
      */
     public static DigestCheck verifyContentDigest(String headerValue, byte[] body) {
         boolean sawSupported = false;
-        for (String member : headerValue.split(",")) {
+        for (String member : headerValue.split(",", -1)) {
             int eq = member.indexOf('=');
             if (eq == -1) {
                 continue;
@@ -176,7 +180,7 @@ public final class SignatureBase {
         return sawSupported ? DigestCheck.MATCH : DigestCheck.NO_SUPPORTED_ALGORITHM;
     }
 
-    private static String requireBodyHeader(Map<String, String> headers, byte[] body, String name) {
+    private static String requireBodyHeader(Map<String, String> headers, byte @Nullable [] body, String name) {
         if (body == null || body.length == 0) {
             throw new IllegalArgumentException(name + " component specified but no body present");
         }
@@ -188,7 +192,7 @@ public final class SignatureBase {
     }
 
     /** Case-insensitive header lookup; returns {@code null} when absent. */
-    static String getHeader(Map<String, String> headers, String name) {
+    static @Nullable String getHeader(@Nullable Map<String, String> headers, String name) {
         if (headers == null) {
             return null;
         }

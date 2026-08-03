@@ -28,6 +28,13 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 - **2026-07-30 — Error Prone / NullAway deferred**: on JDK 26 they require fragile
   `--add-exports` wiring into the compiler fork. Baseline warnings policy is enforced via
   `-Xlint:all,-serial,-processing -Werror` instead. Revisit once the port is complete.
+- **2026-08-02 — Error Prone + NullAway enabled** (deferral closed): Error Prone 2.50.0 runs
+  on main sources of both modules (tests compile plain); the jdk.compiler exports/opens live
+  in `.mvn/jvm.config`. All findings fixed except `ArrayRecordComponent`, suppressed with
+  justification on records carrying raw `byte[]` crypto/HTTP bytes. NullAway 0.13.8 runs in
+  `OnlyNullMarked` mode with JSpecify annotations: `aauth-signing` is fully `@NullMarked`
+  (nullable params/returns annotated; builders validate before constructing records).
+  **Next increment**: `@NullMarked` the `aauth` module package by package.
 - **2026-07-30 — WireMock dropped**: test HTTP servers use the JDK's built-in
   `com.sun.net.httpserver.HttpServer` — zero extra dependencies and no JUnit-major
   compatibility risk.

@@ -10,6 +10,7 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.util.Base64;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Minimal compact JWT codec on JDK crypto.
@@ -31,17 +32,19 @@ public final class Jwts {
      * A parsed compact JWT. {@code signingInput} is the {@code header.payload} portion whose
      * signature is verified.
      */
+    // byte[] components are intentional: raw signature bytes; record equality is never used.
+    @SuppressWarnings("ArrayRecordComponent")
     public record Decoded(
             Map<String, Object> header, Map<String, Object> payload, byte[] signature, byte[] signingInput) {
 
         /** Convenience accessor for a string claim from the payload; {@code null} when absent. */
-        public String claim(String name) {
+        public @Nullable String claim(String name) {
             Object value = payload.get(name);
             return value == null ? null : value.toString();
         }
 
         /** Convenience accessor for a numeric claim from the payload; {@code null} when absent. */
-        public Long numericClaim(String name) {
+        public @Nullable Long numericClaim(String name) {
             Object value = payload.get(name);
             return value instanceof Number number ? number.longValue() : null;
         }

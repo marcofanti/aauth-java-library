@@ -246,7 +246,7 @@ public final class AAuthHeaders {
     /** Parses an {@code AAuth-Capabilities} header into capability tokens. */
     public static List<String> parseCapabilitiesHeader(String headerValue) {
         List<String> capabilities = new ArrayList<>();
-        for (String part : headerValue.split(",")) {
+        for (String part : headerValue.split(",", -1)) {
             String token = part.strip();
             if (!token.isEmpty()) {
                 capabilities.add(token);
@@ -260,7 +260,8 @@ public final class AAuthHeaders {
      * Returns {@code null} when the header is not an AAuth bearer.
      */
     public static String parseAuthorizationAAuthHeader(String headerValue) {
-        if (headerValue != null && headerValue.toLowerCase().startsWith("aauth ")) {
+        if (headerValue != null
+                && headerValue.toLowerCase(java.util.Locale.ROOT).startsWith("aauth ")) {
             String token = headerValue.substring(6).strip();
             return token.isEmpty() ? null : token;
         }

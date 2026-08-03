@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /** {@code Signature-Input} header building and parsing (RFC 9421 §4.1). */
 public final class SignatureInputHeader {
@@ -37,7 +38,7 @@ public final class SignatureInputHeader {
      * @param label signature label (conventionally {@code sig})
      * @param created creation timestamp in Unix seconds; {@code null} uses the current time
      */
-    public static String build(List<String> coveredComponents, String label, Long created) {
+    public static String build(List<String> coveredComponents, String label, @Nullable Long created) {
         long timestamp = created != null ? created : Instant.now().getEpochSecond();
         return label + "=" + buildParams(coveredComponents, timestamp);
     }

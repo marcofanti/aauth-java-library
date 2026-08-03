@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /** HTTP request signing per RFC 9421 with the Signature-Key header extension. */
 public final class RequestSigner {
@@ -128,7 +129,7 @@ public final class RequestSigner {
         throw new HttpSignatureException("Unsupported private key type: " + privateKey.getAlgorithm());
     }
 
-    private static String lookup(Map<String, String> headers, String name) {
+    private static @Nullable String lookup(Map<String, String> headers, String name) {
         for (Map.Entry<String, String> entry : headers.entrySet()) {
             if (entry.getKey().equalsIgnoreCase(name)) {
                 return entry.getValue();
