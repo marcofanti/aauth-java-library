@@ -19,7 +19,11 @@ class SignatureKeyHeaderTest {
         SignatureKeyHeader.Parsed parsed = SignatureKeyHeader.parse(header);
         assertThat(parsed.label()).isEqualTo("sig");
         assertThat(parsed.scheme()).isEqualTo("hwk");
-        assertThat(parsed.params()).containsEntry("kty", "OKP").containsEntry("crv", "Ed25519");
+        assertThat(parsed.params())
+                .containsEntry("kty", "OKP")
+                .containsEntry("crv", "Ed25519")
+                // Sigkey draft-08: the inline alg parameter MUST be present and fully specified.
+                .containsEntry("alg", "Ed25519");
     }
 
     @Test

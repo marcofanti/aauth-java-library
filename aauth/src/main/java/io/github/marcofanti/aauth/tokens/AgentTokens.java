@@ -1,5 +1,6 @@
 package io.github.marcofanti.aauth.tokens;
 
+import io.github.marcofanti.aauth.Identifiers;
 import io.github.marcofanti.aauth.TokenException;
 import io.github.marcofanti.aauth.signing.Jwts;
 import java.security.PrivateKey;
@@ -38,7 +39,8 @@ public final class AgentTokens {
             Long exp,
             Object aud,
             String audSub,
-            String ps) {
+            String ps,
+            String parentAgent) {
 
         public Spec {
             if (iss == null || sub == null || cnfJwk == null || privateKey == null || kid == null) {
@@ -61,6 +63,7 @@ public final class AgentTokens {
             private Object aud;
             private String audSub;
             private String ps;
+            private String parentAgent;
 
             private Builder(String iss, String sub, Map<String, Object> cnfJwk, PrivateKey privateKey, String kid) {
                 this.iss = iss;
@@ -90,8 +93,13 @@ public final class AgentTokens {
                 return this;
             }
 
+            public Builder parentAgent(String parentAgent) {
+                this.parentAgent = parentAgent;
+                return this;
+            }
+
             public Spec build() {
-                return new Spec(iss, sub, cnfJwk, privateKey, kid, exp, aud, audSub, ps);
+                return new Spec(iss, sub, cnfJwk, privateKey, kid, exp, aud, audSub, ps, parentAgent);
             }
         }
     }
@@ -103,7 +111,7 @@ public final class AgentTokens {
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", TYPE);
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", spec.kid());
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -122,6 +130,9 @@ public final class AgentTokens {
         }
         if (spec.ps() != null) {
             payload.put("ps", spec.ps());
+        }
+        if (spec.parentAgent() != null) {
+            payload.put("parent_agent", spec.parentAgent());
         }
 
         return Jwts.signEdDsa(header, payload, spec.privateKey());
@@ -180,6 +191,24 @@ public final class AgentTokens {
         }
         if (!(cnfMap.get("jwk") instanceof Map)) {
             throw new TokenException("Token missing 'cnf.jwk' claim", TYPE);
+        }
+
+        // Draft-10 §5.2.4 steps 6-7: validate ps and parent_agent when present.
+        String ps = jwt.claim("ps");
+        if (ps != null) {
+            try {
+                Identifiers.validateServerIdentifier(ps);
+            } catch (IllegalArgumentException e) {
+                throw new TokenException("Invalid 'ps' claim: " + e.getMessage(), TYPE, null, null, e);
+            }
+        }
+        String parentAgent = jwt.claim("parent_agent");
+        if (parentAgent != null) {
+            try {
+                Identifiers.validateAgentIdentifier(parentAgent);
+            } catch (IllegalArgumentException e) {
+                throw new TokenException("Invalid 'parent_agent' claim: " + e.getMessage(), TYPE, null, null, e);
+            }
         }
 
         return jwt.payload();

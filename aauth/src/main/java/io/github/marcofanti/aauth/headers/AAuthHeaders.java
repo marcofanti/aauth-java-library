@@ -39,6 +39,12 @@ public final class AAuthHeaders {
     public static final String HEADER_AAUTH_MISSION = "AAuth-Mission";
     public static final String HEADER_SIGNATURE_ERROR = "Signature-Error";
 
+    /** Sigkey draft-08 §4.1: schemes the server accepts (with {@code unsupported_scheme}). */
+    public static final String HEADER_ACCEPT_SIGNATURE_SCHEME = "Accept-Signature-Scheme";
+
+    /** Sigkey draft-08 §4.2: algorithms the server accepts (with {@code unsupported_algorithm}). */
+    public static final String HEADER_ACCEPT_SIGNATURE_ALG = "Accept-Signature-Alg";
+
     // AAuth-Capabilities values.
     public static final String CAPABILITY_INTERACTION = "interaction";
     public static final String CAPABILITY_CLARIFICATION = "clarification";
@@ -241,6 +247,19 @@ public final class AAuthHeaders {
     /** Builds an {@code AAuth-Capabilities} request header value, e.g. {@code interaction, payment}. */
     public static String buildCapabilitiesHeader(List<String> capabilities) {
         return String.join(", ", capabilities);
+    }
+
+    /**
+     * Builds an {@code Accept-Signature-Alg} or {@code Accept-Signature-Scheme} response header
+     * value (a comma-separated token list, e.g. {@code Ed25519, ES256}).
+     */
+    public static String buildAcceptListHeader(List<String> values) {
+        return String.join(", ", values);
+    }
+
+    /** Parses an {@code Accept-Signature-Alg} / {@code Accept-Signature-Scheme} header value. */
+    public static List<String> parseAcceptListHeader(String headerValue) {
+        return parseCapabilitiesHeader(headerValue);
     }
 
     /** Parses an {@code AAuth-Capabilities} header into capability tokens. */

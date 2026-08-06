@@ -51,6 +51,8 @@ public final class Jwk {
             jwk.put("kty", "OKP");
             jwk.put("crv", "Ed25519");
             jwk.put("x", B64URL.encodeToString(ed25519ToRaw(edKey)));
+            // AAuth draft-10 / RFC 9864: every JWK MUST carry a fully-specified alg.
+            jwk.put("alg", "Ed25519");
         } else if (publicKey instanceof ECPublicKey ecKey) {
             int fieldBytes = (ecKey.getParams().getCurve().getField().getFieldSize() + 7) / 8;
             String crv =
@@ -65,6 +67,7 @@ public final class Jwk {
             jwk.put("crv", crv);
             jwk.put("x", B64URL.encodeToString(toFixedLength(ecKey.getW().getAffineX(), fieldBytes)));
             jwk.put("y", B64URL.encodeToString(toFixedLength(ecKey.getW().getAffineY(), fieldBytes)));
+            jwk.put("alg", "P-256".equals(crv) ? "ES256" : "ES384");
         } else {
             throw new IllegalArgumentException(
                     "Unsupported key type: " + publicKey.getClass().getName());
@@ -76,12 +79,51 @@ public final class Jwk {
         return java.util.Collections.unmodifiableMap(jwk);
     }
 
+    /** JOSE alg identifiers this library accepts, mapped to the (kty, crv) they require. */
+    private static final Map<String, String> ALG_TO_KEY_SHAPE = Map.of(
+            "Ed25519", "OKP/Ed25519",
+            "ES256", "EC/P-256",
+            "ES384", "EC/P-384",
+            "RS256", "RSA/");
+
+    /**
+     * Validates a JWK's {@code alg} member per AAuth draft-10 §12.8.1 / RFC 9864.
+     *
+     * <p>Transition tolerance: an absent {@code alg} is currently allowed (legacy peers).
+     * When present it MUST be a supported fully-specified identifier — the polymorphic
+     * {@code EdDSA}, {@code none} and symmetric algorithms are rejected — and MUST agree with
+     * the key's {@code kty}/{@code crv}.
+     *
+     * @throws IllegalArgumentException if the alg is forbidden, unsupported, or inconsistent
+     */
+    public static void requireConsistentAlg(Map<String, Object> jwk) {
+        String alg = str(jwk, "alg");
+        if (alg == null) {
+            return;
+        }
+        String shape = ALG_TO_KEY_SHAPE.get(alg);
+        if (shape == null) {
+            throw new IllegalArgumentException("Forbidden or unsupported JWK alg: " + alg);
+        }
+        String kty = str(jwk, "kty");
+        String crv = str(jwk, "crv");
+        String actual = (kty == null ? "" : kty) + "/" + (crv == null ? "" : crv);
+        if (!shape.equals(actual)) {
+            throw new IllegalArgumentException(
+                    "JWK alg " + alg + " disagrees with key type " + actual + " (expected " + shape + ")");
+        }
+    }
+
     /**
      * Converts a JWK to a {@link PublicKey} (Ed25519, EC P-256/P-384, or RSA).
      *
-     * @throws IllegalArgumentException if the JWK uses an unsupported key type or curve
+     * <p>When the JWK carries an {@code alg} member it is validated first — see
+     * {@link #requireConsistentAlg(Map)}.
+     *
+     * @throws IllegalArgumentException if the JWK uses an unsupported key type, curve or alg
      */
     public static PublicKey toPublicKey(Map<String, Object> jwk) {
+        requireConsistentAlg(jwk);
         String kty = str(jwk, "kty");
         try {
             if ("OKP".equals(kty)) {

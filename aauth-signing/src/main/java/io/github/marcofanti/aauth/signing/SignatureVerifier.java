@@ -124,6 +124,7 @@ public final class SignatureVerifier {
         putIfPresent(jwk, params, "y");
         putIfPresent(jwk, params, "n");
         putIfPresent(jwk, params, "e");
+        putIfPresent(jwk, params, "alg");
         return Jwk.toPublicKey(jwk);
     }
 

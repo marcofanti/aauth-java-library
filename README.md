@@ -10,6 +10,11 @@ This is a port of [aauth-python-library](https://github.com/christian-posta/aaut
 with wire-format parity: requests signed by one library verify in the other (covered by
 cross-language interop tests).
 
+Implements protocol draft **-10** on the emission side (fully-specified `alg` per RFC 9864 —
+`Ed25519`, never `EdDSA` — in every JWK and token header; `account` claim; new error codes),
+with tolerant verification of pre-10 peers during the ecosystem transition (see
+[docs/PROGRESS.md](docs/PROGRESS.md)).
+
 ## Modules
 
 | Module | Coordinates | Package | Responsibility |

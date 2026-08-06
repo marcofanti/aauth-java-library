@@ -127,6 +127,43 @@ class JwkTest {
     }
 
     @Test
+    void emittedJwksCarryFullySpecifiedAlg() {
+        // AAuth draft-10 / RFC 9864: every emitted JWK MUST carry a fully-specified alg.
+        assertThat(Jwk.publicKeyToJwk(KeyPairs.generateEd25519().getPublic(), null))
+                .containsEntry("alg", "Ed25519");
+        assertThat(Jwk.publicKeyToJwk(KeyPairs.generateEcP256().getPublic(), null))
+                .containsEntry("alg", "ES256");
+        assertThat(Jwk.publicKeyToJwk(KeyPairs.generateEcP384().getPublic(), null))
+                .containsEntry("alg", "ES384");
+    }
+
+    @Test
+    void algConsistencyIsEnforcedOnConversion() {
+        Map<String, Object> base = Jwk.publicKeyToJwk(KeyPairs.generateEd25519().getPublic(), null);
+
+        // Matching alg converts fine; absent alg is tolerated (legacy peers).
+        assertThat(Jwk.toPublicKey(base).getAlgorithm()).isEqualTo("EdDSA");
+        Map<String, Object> withoutAlg = new java.util.LinkedHashMap<>(base);
+        withoutAlg.remove("alg");
+        assertThat(Jwk.toPublicKey(withoutAlg).getAlgorithm()).isEqualTo("EdDSA");
+
+        // Polymorphic, symmetric and mismatched algs are rejected.
+        Map<String, Object> polymorphic = new java.util.LinkedHashMap<>(base);
+        polymorphic.put("alg", "EdDSA");
+        assertThatThrownBy(() -> Jwk.toPublicKey(polymorphic))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("EdDSA");
+        Map<String, Object> symmetric = new java.util.LinkedHashMap<>(base);
+        symmetric.put("alg", "HS256");
+        assertThatThrownBy(() -> Jwk.toPublicKey(symmetric)).isInstanceOf(IllegalArgumentException.class);
+        Map<String, Object> mismatched = new java.util.LinkedHashMap<>(base);
+        mismatched.put("alg", "ES256");
+        assertThatThrownBy(() -> Jwk.toPublicKey(mismatched))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("disagrees");
+    }
+
+    @Test
     void generateJwksWrapsKeys() {
         Map<String, Object> jwk = Map.of("kty", "OKP", "crv", "Ed25519", "x", "abc");
         Map<String, Object> jwks = Jwk.generateJwks(List.of(jwk));

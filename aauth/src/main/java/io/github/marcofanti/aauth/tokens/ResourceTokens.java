@@ -29,6 +29,8 @@ public final class ResourceTokens {
      * @param kid key ID for the signing key
      * @param exp expiration (Unix seconds); {@code null} defaults to ten minutes from now
      * @param mission optional {@code {"approver": url, "s256": hash}} when mission-aware
+     * @param account optional account identifier at the resource, echoing the authorization
+     *     request's account parameter (draft-10 §12.3)
      */
     public record Spec(
             String iss,
@@ -39,7 +41,8 @@ public final class ResourceTokens {
             PrivateKey privateKey,
             String kid,
             Long exp,
-            Map<String, Object> mission) {
+            Map<String, Object> mission,
+            String account) {
 
         public Spec {
             if (iss == null
@@ -61,7 +64,7 @@ public final class ResourceTokens {
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", TYPE);
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", spec.kid());
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -76,6 +79,9 @@ public final class ResourceTokens {
         payload.put("exp", exp);
         if (spec.mission() != null) {
             payload.put("mission", spec.mission());
+        }
+        if (spec.account() != null) {
+            payload.put("account", spec.account());
         }
 
         return Jwts.signEdDsa(header, payload, spec.privateKey());

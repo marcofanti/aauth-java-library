@@ -41,6 +41,28 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 - **2026-07-30 — JUnit 6.1.2**: current stable line; validated with a toolchain smoke test
   in phase 1.
 
+## AAuth draft-10 compliance (2026-08-06)
+
+Protocol draft **-10** and Signature-Keys draft **-08** introduced normative changes (driven
+by RFC 9864). Strategy: **compliant emission, tolerant verification** — the Python reference
+library has not yet updated, so we emit the new wire format while still accepting the old.
+
+- Every emitted JWK carries a fully-specified `alg` (`Ed25519`/`ES256`/`ES384`), including
+  `cnf.jwk` and the inline `hwk` Signature-Key parameters. `Jwk.toPublicKey` validates `alg`
+  when present (rejects `EdDSA`, `none`, HS*, kty/crv mismatch) but tolerates its absence.
+- Token headers now use `alg: Ed25519`; verification accepts `Ed25519` and legacy `EdDSA`.
+- New error codes `unsupported_scheme` / `cache_miss` and the `Accept-Signature-Scheme` /
+  `Accept-Signature-Alg` response headers (build/parse).
+- New `account` claim on resource and auth tokens (authorization-endpoint account selection,
+  draft-10 §12.3); new `parent_agent` claim on agent tokens with the §5.2.4 verification
+  steps (`ps` and `parent_agent` identifier validation).
+- Interop: Python→Java directions still pass; the Java→Python token test asserts structural
+  parsing and auto-heals to full verification once upstream reaches draft-10.
+
+**Follow-ups**: flip to strict `alg`-required verification once the Python library and the
+person server are on draft-10; phase B for the new sigkey-08 schemes (`jwks`, `self-jwt`,
+`cached`, direct x509) and the AAuth §12.8.2 `scheme=jwt`-only rule.
+
 ## Final review (2026-07-30)
 
 A security-focused review (java-reviewer agent) of the finished port found 4 issues, all fixed

@@ -53,6 +53,8 @@ public final class SignatureKeyHeader {
             if (jwk.get("y") instanceof String y) {
                 pairs.add(Map.entry("y", y));
             }
+            // Sigkey draft-08: the inline alg parameter MUST be present and fully specified.
+            pairs.add(Map.entry("alg", (String) jwk.get("alg")));
             return label + "=hwk;" + formatParams(pairs);
         }
         if (scheme instanceof SignatureScheme.JktJwt jktJwt) {
