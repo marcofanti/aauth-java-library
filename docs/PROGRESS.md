@@ -103,6 +103,13 @@ localhost-only HTTP carve-out itself.
   dictionary: sha-256 and sha-512 are both verified (every recognized member must match),
   and a header carrying only unrecognized algorithms fails with
   `unsupported content-digest algorithm` (fail closed).
+- **Mission binding helpers and coverage enforcement (2026-08-06)**: new
+  `MissionBinding` utility (`s256` per the PS reference: unpadded base64url SHA-256 of the
+  mission JSON; `matchesDocument` / `matchesClaim`). `RequestVerifier` now surfaces the
+  parsed `AAuth-Mission` header in its `Result` and — stricter than the Python reference —
+  rejects requests that carry `AAuth-Mission` without covering `aauth-mission` in the
+  signature (an uncovered header could be swapped after signing). Mission lifecycle/state
+  remains person-server territory.
 - **Signature header base64 flavor preserved**: the Python library base64url-encodes the
   `Signature` header value (RFC 9421 §4.2 specifies sf-binary, i.e. standard base64).
   We mirror the Python behavior for interop; both parsers only accept the urlsafe alphabet.

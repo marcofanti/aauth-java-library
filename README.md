@@ -150,6 +150,9 @@ RequestVerifier.Result result = verifier.verifyRequest(
 if (result.valid()) {
     System.out.println("Agent: " + result.agentId() + ", Scopes: " + result.scopes());
 }
+// Mission-aware requests: verifyRequest rejects an AAuth-Mission header that isn't covered
+// by the signature, and surfaces the parsed header via result.mission(). Use MissionBinding
+// to check it against a mission document (s256) or a token's mission claim.
 // When a request carries both a Content-Digest header and a body, verifyRequest recomputes
 // the RFC 9530 digest from the body and rejects mismatches ("content-digest mismatch") —
 // stricter than the Python reference, which only verifies the header value. sha-256 and

@@ -1,9 +1,11 @@
 package io.github.marcofanti.aauth.resource;
 
+import io.github.marcofanti.aauth.headers.AAuthHeaders;
 import io.github.marcofanti.aauth.signing.HttpSignatureException;
 import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.Jwts;
 import io.github.marcofanti.aauth.signing.SignatureBase;
+import io.github.marcofanti.aauth.signing.SignatureInputHeader;
 import io.github.marcofanti.aauth.signing.SignatureKeyHeader;
 import io.github.marcofanti.aauth.signing.SignatureVerifier;
 import io.github.marcofanti.aauth.signing.VerifyRequest;
@@ -30,13 +32,21 @@ public final class RequestVerifier {
 
     /**
      * Outcome of request verification. When {@code valid} is false, {@code error} explains why;
-     * identity fields are filled in based on the Signature-Key scheme.
+     * identity fields are filled in based on the Signature-Key scheme. {@code mission} is the
+     * parsed {@code AAuth-Mission} header when the request carried one (always
+     * signature-covered — see {@link #verifyRequest}).
      */
     public record Result(
-            boolean valid, String agentId, Map<String, Object> act, String userSub, List<String> scopes, String error) {
+            boolean valid,
+            String agentId,
+            Map<String, Object> act,
+            String userSub,
+            List<String> scopes,
+            AAuthHeaders.Mission mission,
+            String error) {
 
         static Result failure(String error) {
-            return new Result(false, null, null, null, null, error);
+            return new Result(false, null, null, null, null, null, error);
         }
     }
 
@@ -113,6 +123,17 @@ public final class RequestVerifier {
             }
         }
 
+        // Spec §Authorization Endpoint Request: a request carrying AAuth-Mission MUST cover it
+        // in the signature; an uncovered mission header could be swapped after signing.
+        AAuthHeaders.Mission mission = null;
+        String missionHeader = header(headers, AAuthHeaders.HEADER_AAUTH_MISSION);
+        if (missionHeader != null) {
+            if (!SignatureInputHeader.parse(signatureInput).components().contains("aauth-mission")) {
+                return Result.failure("aauth-mission header not covered by signature");
+            }
+            mission = AAuthHeaders.parseMissionHeader(missionHeader);
+        }
+
         String agentId = null;
         Map<String, Object> act = null;
         String userSub = null;
@@ -157,7 +178,7 @@ public final class RequestVerifier {
             return Result.failure("Auth token required but not present");
         }
 
-        return new Result(true, agentId, act, userSub, scopes, null);
+        return new Result(true, agentId, act, userSub, scopes, mission, null);
     }
 
     private static String header(Map<String, String> headers, String name) {

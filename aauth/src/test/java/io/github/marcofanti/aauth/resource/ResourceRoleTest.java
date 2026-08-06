@@ -241,6 +241,46 @@ class ResourceRoleTest {
     }
 
     @Test
+    void missionHeaderIsSurfacedWhenSignatureCovered() {
+        AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();
+        String missionHeader = AAuthHeaders.buildMissionHeader("https://ps.uma.lab", "abc123");
+        Map<String, String> headers = withSignatureHeaders(
+                signer.signRequest("POST", TARGET, Map.of("AAuth-Mission", missionHeader), null, "hwk"));
+        headers.put("AAuth-Mission", missionHeader);
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, null, false, false);
+
+        assertThat(result.valid()).isTrue();
+        assertThat(result.mission()).isNotNull();
+        assertThat(result.mission().approver()).isEqualTo("https://ps.uma.lab");
+        assertThat(result.mission().s256()).isEqualTo("abc123");
+    }
+
+    @Test
+    void uncoveredMissionHeaderIsRejected() {
+        AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();
+        // Sign WITHOUT the mission header, then inject it afterwards: must be rejected.
+        Map<String, String> headers = withSignatureHeaders(signer.signRequest("POST", TARGET, Map.of(), null, "hwk"));
+        headers.put("AAuth-Mission", AAuthHeaders.buildMissionHeader("https://evil.uma.lab", "swapped"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, null, false, false);
+
+        assertThat(result.valid()).isFalse();
+        assertThat(result.error()).isEqualTo("aauth-mission header not covered by signature");
+    }
+
+    @Test
+    void missionIsNullWithoutMissionHeader() {
+        AgentRequestSigner signer = AgentRequestSigner.builder(agentKeys).build();
+        Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "hwk"));
+
+        RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, false, false);
+
+        assertThat(result.valid()).isTrue();
+        assertThat(result.mission()).isNull();
+    }
+
+    @Test
     void missingSignatureHeadersFailCleanly() {
         RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, Map.of(), null, false, false);
 
