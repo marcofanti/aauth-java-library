@@ -243,4 +243,6 @@ Publishing to Maven Central: [RELEASING.md](RELEASING.md).
 
 ## License
 
-MIT
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). This library is a port of
+the MIT-licensed [aauth-python-library](https://github.com/christian-posta/aauth-python-library);
+the upstream attribution is preserved in NOTICE.

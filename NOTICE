@@ -1,0 +1,6 @@
+aauth-java-library
+Copyright 2026 Marco Fanti
+
+This product is a Java implementation of the AAuth protocol, ported from
+aauth-python-library (https://github.com/christian-posta/aauth-python-library),
+Copyright (c) Christian Posta, originally distributed under the MIT License.
