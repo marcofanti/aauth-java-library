@@ -220,6 +220,17 @@ mvn test -pl aauth -am -Dtest=PythonInteropTest \
     -Dsurefire.failIfNoSpecifiedTests=false       # cross-language interop (needs uv + ../aauth-python-library)
 ```
 
+## Sibling implementations
+
+- **TypeScript:** [`aauth-dev/packages-js`](https://github.com/aauth-dev/packages-js) — Dick Hardt's reference implementation
+- **Python:** [`christian-posta/aauth-python-library`](https://github.com/christian-posta/aauth-python-library) (`aauth` on PyPI) — the reference this port tracks; end-to-end demo at [`aauth-full-demo`](https://github.com/christian-posta/aauth-full-demo)
+- **PHP:** [`clawdreyhepburn/aauth-php`](https://github.com/clawdreyhepburn/aauth-php) — request verification for shared hosting
+- **Java:** this repo — `io.github.marcofanti:aauth` / `aauth-signing` on Maven Central
+
+Cross-implementation compatibility is tested live: our interop suite signs in Java and
+verifies with the Python library (and vice versa) on every run that has the Python
+checkout available.
+
 ## Protocol
 
 - Spec: [github.com/dickhardt/AAuth](https://github.com/dickhardt/AAuth)
