@@ -43,7 +43,16 @@ public final class ResourceTokenIssuer {
             Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentPublicKey, null);
             String agentJkt = Jwk.thumbprint(agentJwk);
             return ResourceTokens.create(new ResourceTokens.Spec(
-                    resourceId, authServer, agentId, agentJkt, scope, resourcePrivateKey, resourceKid, exp, null));
+                    resourceId,
+                    authServer,
+                    agentId,
+                    agentJkt,
+                    scope,
+                    resourcePrivateKey,
+                    resourceKid,
+                    exp,
+                    null,
+                    null));
         } catch (TokenException e) {
             throw e;
         } catch (RuntimeException e) {

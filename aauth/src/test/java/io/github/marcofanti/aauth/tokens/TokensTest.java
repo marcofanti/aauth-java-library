@@ -177,6 +177,78 @@ class TokensTest {
     }
 
     @Test
+    void tokensCarryFullySpecifiedEd25519Alg() {
+        Map<String, Object> parsed = AuthTokens.parseTokenClaims(agentToken());
+        assertThat(((Map<?, ?>) parsed.get("header")).get("alg")).isEqualTo("Ed25519");
+    }
+
+    @Test
+    void legacyEdDsaSignedTokenStillVerifies() {
+        // Transition tolerance: pre-draft-10 peers (the Python reference) sign with "EdDSA".
+        Map<String, Object> header =
+                new LinkedHashMap<>(Map.of("typ", AgentTokens.TYPE, "alg", "EdDSA", "kid", "key-1"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("iss", AGENT_SERVER);
+        payload.put("sub", "delegate-1");
+        payload.put("jti", "legacy-1");
+        payload.put("cnf", Map.of("jwk", delegateJwk));
+        payload.put("exp", Instant.now().getEpochSecond() + 300);
+        String legacyToken = Jwts.signEdDsa(header, payload, issuerKeys.getPrivate());
+
+        assertThat(AgentTokens.verify(legacyToken, issuerJwksFetcher, null)).containsEntry("sub", "delegate-1");
+    }
+
+    @Test
+    void agentTokenValidatesPsAndParentAgentWhenPresent() {
+        String valid = AgentTokens.create(
+                AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
+                        .ps("https://ps.uma.lab")
+                        .parentAgent("aauth:parent@portal.uma.lab")
+                        .build());
+        assertThat(AgentTokens.verify(valid, issuerJwksFetcher, null))
+                .containsEntry("parent_agent", "aauth:parent@portal.uma.lab");
+
+        String badPs = AgentTokens.create(
+                AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
+                        .ps("http://ps.uma.lab:8080/path")
+                        .build());
+        assertThatThrownBy(() -> AgentTokens.verify(badPs, issuerJwksFetcher, null))
+                .isInstanceOf(TokenException.class)
+                .hasMessageContaining("'ps'");
+
+        String badParent = AgentTokens.create(
+                AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
+                        .parentAgent("not-an-agent-id")
+                        .build());
+        assertThatThrownBy(() -> AgentTokens.verify(badParent, issuerJwksFetcher, null))
+                .isInstanceOf(TokenException.class)
+                .hasMessageContaining("parent_agent");
+    }
+
+    @Test
+    void accountClaimRoundTripsOnBothTokenTypes() {
+        String authToken = AuthTokens.create(
+                authTokenSpec().account("alice@gateway.uma.lab").build());
+        Map<String, Object> authClaims =
+                AuthTokens.verifyToken(authToken, issuerJwksFetcher, AuthTokens.VerifyOptions.forType(AuthTokens.TYPE));
+        assertThat(authClaims).containsEntry("account", "alice@gateway.uma.lab");
+
+        String resourceToken = ResourceTokens.create(new ResourceTokens.Spec(
+                RESOURCE,
+                AUTH_SERVER,
+                AGENT_ID,
+                "jkt",
+                "s",
+                issuerKeys.getPrivate(),
+                "key-1",
+                null,
+                null,
+                "alice@gateway.uma.lab"));
+        assertThat(ResourceTokens.verify(resourceToken, issuerJwksFetcher, null, null, null))
+                .containsEntry("account", "alice@gateway.uma.lab");
+    }
+
+    @Test
     void parseTokenClaimsExposesHeaderAndPayload() {
         Map<String, Object> parsed =
                 AuthTokens.parseTokenClaims(AuthTokens.create(authTokenSpec().build()));
@@ -196,6 +268,7 @@ class TokensTest {
                 "data.read data.write",
                 issuerKeys.getPrivate(),
                 "key-1",
+                null,
                 null,
                 null));
     }
@@ -230,6 +303,7 @@ class TokensTest {
                 issuerKeys.getPrivate(),
                 "key-1",
                 Instant.now().getEpochSecond() - 5,
+                null,
                 null));
 
         assertThatThrownBy(() -> ResourceTokens.verify(token, issuerJwksFetcher, null, null, null))
@@ -248,7 +322,8 @@ class TokensTest {
                 issuerKeys.getPrivate(),
                 "key-1",
                 null,
-                Map.of("approver", "https://ps.uma.lab", "s256", "abc")));
+                Map.of("approver", "https://ps.uma.lab", "s256", "abc"),
+                null));
 
         Map<String, Object> claims = ResourceTokens.verify(token, issuerJwksFetcher, null, null, null);
         assertThat(((Map<?, ?>) claims.get("mission")).get("approver")).isEqualTo("https://ps.uma.lab");

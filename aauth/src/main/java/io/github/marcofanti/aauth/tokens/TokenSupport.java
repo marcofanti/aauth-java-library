@@ -31,9 +31,11 @@ final class TokenSupport {
         if (kid == null) {
             throw new TokenException("Token header missing 'kid'", tokenType);
         }
-        if (!"EdDSA".equals(jwt.header().get("alg"))) {
-            throw new TokenException(
-                    "Unsupported token alg: expected EdDSA, got " + jwt.header().get("alg"), tokenType);
+        Object alg = jwt.header().get("alg");
+        // Draft-10 tokens carry the fully-specified "Ed25519" (RFC 9864); the polymorphic
+        // "EdDSA" is accepted as legacy during the transition.
+        if (!"Ed25519".equals(alg) && !"EdDSA".equals(alg)) {
+            throw new TokenException("Unsupported token alg: expected Ed25519, got " + alg, tokenType);
         }
 
         String iss = jwt.claim("iss");

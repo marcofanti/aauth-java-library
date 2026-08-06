@@ -16,6 +16,12 @@ public final class ErrorCodes {
     public static final String ERROR_INVALID_JWT = "invalid_jwt";
     public static final String ERROR_EXPIRED_JWT = "expired_jwt";
 
+    /** Sigkey draft-08 §5.4.2: the Signature-Key scheme is not supported by the recipient. */
+    public static final String ERROR_UNSUPPORTED_SCHEME = "unsupported_scheme";
+
+    /** Sigkey draft-08 §5.4.3: a {@code cached} scheme identifier could not be resolved. */
+    public static final String ERROR_CACHE_MISS = "cache_miss";
+
     // --- Token endpoint error codes (JSON body, per draft-hardt-aauth-protocol) ---
     public static final String ERROR_INVALID_AGENT_TOKEN = "invalid_agent_token";
     public static final String ERROR_EXPIRED_AGENT_TOKEN = "expired_agent_token";

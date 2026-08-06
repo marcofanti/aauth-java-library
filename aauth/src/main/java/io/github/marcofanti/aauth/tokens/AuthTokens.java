@@ -44,7 +44,8 @@ public final class AuthTokens {
             String sub,
             Long exp,
             Map<String, Object> mission,
-            String dwk) {
+            String dwk,
+            String account) {
 
         public Spec {
             if (agent == null || agent.isEmpty()) {
@@ -77,6 +78,7 @@ public final class AuthTokens {
             private Long exp;
             private Map<String, Object> mission;
             private String dwk;
+            private String account;
 
             private Builder(String iss, String aud, String agent) {
                 this.iss = iss;
@@ -125,8 +127,13 @@ public final class AuthTokens {
                 return this;
             }
 
+            public Builder account(String account) {
+                this.account = account;
+                return this;
+            }
+
             public Spec build() {
-                return new Spec(iss, aud, agent, cnfJwk, privateKey, kid, act, scope, sub, exp, mission, dwk);
+                return new Spec(iss, aud, agent, cnfJwk, privateKey, kid, act, scope, sub, exp, mission, dwk, account);
             }
         }
     }
@@ -138,7 +145,7 @@ public final class AuthTokens {
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", TYPE);
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", spec.kid());
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -159,6 +166,9 @@ public final class AuthTokens {
         }
         if (spec.mission() != null) {
             payload.put("mission", spec.mission());
+        }
+        if (spec.account() != null) {
+            payload.put("account", spec.account());
         }
 
         return Jwts.signEdDsa(header, payload, spec.privateKey());
