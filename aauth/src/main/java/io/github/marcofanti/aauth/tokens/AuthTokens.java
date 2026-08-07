@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 
 /** Auth token ({@code aa-auth+jwt}) creation and verification per AAuth spec §9.1. */
 public final class AuthTokens {
@@ -40,12 +41,12 @@ public final class AuthTokens {
             PrivateKey privateKey,
             String kid,
             Map<String, Object> act,
-            String scope,
-            String sub,
-            Long exp,
-            Map<String, Object> mission,
+            @Nullable String scope,
+            @Nullable String sub,
+            @Nullable Long exp,
+            @Nullable Map<String, Object> mission,
             String dwk,
-            String account) {
+            @Nullable String account) {
 
         public Spec {
             if (agent == null || agent.isEmpty()) {
@@ -69,16 +70,16 @@ public final class AuthTokens {
             private final String iss;
             private final String aud;
             private final String agent;
-            private Map<String, Object> cnfJwk;
-            private PrivateKey privateKey;
-            private String kid;
-            private Map<String, Object> act;
-            private String scope;
-            private String sub;
-            private Long exp;
-            private Map<String, Object> mission;
-            private String dwk;
-            private String account;
+            private @Nullable Map<String, Object> cnfJwk;
+            private @Nullable PrivateKey privateKey;
+            private @Nullable String kid;
+            private @Nullable Map<String, Object> act;
+            private @Nullable String scope;
+            private @Nullable String sub;
+            private @Nullable Long exp;
+            private @Nullable Map<String, Object> mission;
+            private @Nullable String dwk;
+            private @Nullable String account;
 
             private Builder(String iss, String aud, String agent) {
                 this.iss = iss;
@@ -133,7 +134,23 @@ public final class AuthTokens {
             }
 
             public Spec build() {
-                return new Spec(iss, aud, agent, cnfJwk, privateKey, kid, act, scope, sub, exp, mission, dwk, account);
+                if (cnfJwk == null || privateKey == null || kid == null || act == null) {
+                    throw new IllegalArgumentException("iss, aud, cnfJwk, privateKey, kid and act are required");
+                }
+                return new Spec(
+                        iss,
+                        aud,
+                        agent,
+                        cnfJwk,
+                        privateKey,
+                        kid,
+                        act,
+                        scope,
+                        sub,
+                        exp,
+                        mission,
+                        dwk == null ? "aauth-access.json" : dwk,
+                        account);
             }
         }
     }
@@ -185,13 +202,13 @@ public final class AuthTokens {
 
     /** Expectations for {@link #verifyToken}. All fields optional. */
     public record VerifyOptions(
-            String expectedTyp,
-            String expectedIss,
-            String expectedAud,
-            String expectedAgent,
-            Map<String, Object> requestSigningJwk) {
+            @Nullable String expectedTyp,
+            @Nullable String expectedIss,
+            @Nullable String expectedAud,
+            @Nullable String expectedAgent,
+            @Nullable Map<String, Object> requestSigningJwk) {
 
-        public static VerifyOptions forType(String expectedTyp) {
+        public static VerifyOptions forType(@Nullable String expectedTyp) {
             return new VerifyOptions(expectedTyp, null, null, null, null);
         }
     }

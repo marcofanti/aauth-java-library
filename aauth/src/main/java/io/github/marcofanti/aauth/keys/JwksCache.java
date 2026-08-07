@@ -3,6 +3,7 @@ package io.github.marcofanti.aauth.keys;
 import java.time.Clock;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.jspecify.annotations.Nullable;
 
 /**
  * In-memory JWKS cache with TTL and a hard maximum age.
@@ -31,7 +32,7 @@ public final class JwksCache {
     }
 
     /** Returns the cached JWKS for {@code url}, or {@code null} when absent or expired. */
-    public Map<String, Object> get(String url) {
+    public @Nullable Map<String, Object> get(String url) {
         Entry entry = cache.get(url);
         if (entry == null) {
             return null;

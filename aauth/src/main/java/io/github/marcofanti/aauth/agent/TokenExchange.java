@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
+import org.jspecify.annotations.Nullable;
 
 /** Three-party token exchange with the person server (spec §4.1.3). */
 public final class TokenExchange {
@@ -35,7 +36,7 @@ public final class TokenExchange {
      * Extracts the {@code resource_token} from a 401 AAuth challenge response's headers.
      * Returns {@code null} when no challenge header carries one.
      */
-    public static String extractResourceToken(Map<String, String> headers) {
+    public static @Nullable String extractResourceToken(Map<String, String> headers) {
         String raw = AAuthHeaders.getChallengeHeaderValue(headers);
         if (raw.isEmpty()) {
             return null;
@@ -67,22 +68,24 @@ public final class TokenExchange {
             KeyPair keyPair,
             String agentJwt,
             HttpClient httpClient,
-            BiConsumer<String, String> onInteraction,
-            BiFunction<String, String, String> onClarification,
+            @Nullable BiConsumer<String, String> onInteraction,
+            @Nullable BiFunction<String, String, String> onClarification,
             int maxPolls,
-            Poller.Sleeper sleeper) {
+            Poller.@Nullable Sleeper sleeper) {
 
         public Exchange {
             if (resourceToken == null || keyPair == null || agentJwt == null) {
                 throw new IllegalArgumentException("resourceToken, keyPair and agentJwt are required");
             }
-            httpClient = httpClient == null
-                    ? HttpClient.newBuilder()
-                            .version(HttpClient.Version.HTTP_1_1)
-                            .connectTimeout(Duration.ofSeconds(30))
-                            .build()
-                    : httpClient;
+            httpClient = httpClient == null ? defaultHttpClient() : httpClient;
             maxPolls = maxPolls <= 0 ? 60 : maxPolls;
+        }
+
+        private static HttpClient defaultHttpClient() {
+            return HttpClient.newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(Duration.ofSeconds(30))
+                    .build();
         }
 
         public static Builder builder(String resourceToken, KeyPair keyPair, String agentJwt) {
@@ -94,11 +97,11 @@ public final class TokenExchange {
             private final String resourceToken;
             private final KeyPair keyPair;
             private final String agentJwt;
-            private HttpClient httpClient;
-            private BiConsumer<String, String> onInteraction;
-            private BiFunction<String, String, String> onClarification;
+            private @Nullable HttpClient httpClient;
+            private @Nullable BiConsumer<String, String> onInteraction;
+            private @Nullable BiFunction<String, String, String> onClarification;
             private int maxPolls = 60;
-            private Poller.Sleeper sleeper;
+            private Poller.@Nullable Sleeper sleeper;
 
             private Builder(String resourceToken, KeyPair keyPair, String agentJwt) {
                 this.resourceToken = resourceToken;
@@ -106,17 +109,17 @@ public final class TokenExchange {
                 this.agentJwt = agentJwt;
             }
 
-            public Builder httpClient(HttpClient httpClient) {
+            public Builder httpClient(@Nullable HttpClient httpClient) {
                 this.httpClient = httpClient;
                 return this;
             }
 
-            public Builder onInteraction(BiConsumer<String, String> onInteraction) {
+            public Builder onInteraction(@Nullable BiConsumer<String, String> onInteraction) {
                 this.onInteraction = onInteraction;
                 return this;
             }
 
-            public Builder onClarification(BiFunction<String, String, String> onClarification) {
+            public Builder onClarification(@Nullable BiFunction<String, String, String> onClarification) {
                 this.onClarification = onClarification;
                 return this;
             }
@@ -126,7 +129,7 @@ public final class TokenExchange {
                 return this;
             }
 
-            public Builder sleeper(Poller.Sleeper sleeper) {
+            public Builder sleeper(Poller.@Nullable Sleeper sleeper) {
                 this.sleeper = sleeper;
                 return this;
             }
@@ -136,7 +139,7 @@ public final class TokenExchange {
                         resourceToken,
                         keyPair,
                         agentJwt,
-                        httpClient,
+                        httpClient == null ? defaultHttpClient() : httpClient,
                         onInteraction,
                         onClarification,
                         maxPolls,
@@ -249,6 +252,7 @@ public final class TokenExchange {
     // --- HTTP helpers --------------------------------------------------------------------------
 
     private record HttpJson(int status, Map<String, Object> body, Map<String, String> headers, String raw) {
+        @Nullable
         String header(String name) {
             for (Map.Entry<String, String> entry : headers.entrySet()) {
                 if (entry.getKey().equalsIgnoreCase(name)) {

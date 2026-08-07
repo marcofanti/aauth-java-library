@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /** {@code Signature-Error} response header per draft-hardt-httpbis-signature-key. */
 public final class SignatureErrorHeader {
@@ -15,7 +16,10 @@ public final class SignatureErrorHeader {
     private SignatureErrorHeader() {}
 
     /** Parsed {@code Signature-Error} header. List fields are {@code null} when absent. */
-    public record Parsed(String error, List<String> requiredInput, List<String> supportedAlgorithms) {}
+    public record Parsed(
+            @Nullable String error,
+            @Nullable List<String> requiredInput,
+            @Nullable List<String> supportedAlgorithms) {}
 
     /**
      * Builds a {@code Signature-Error} header value.
@@ -24,7 +28,8 @@ public final class SignatureErrorHeader {
      * @param requiredInput for {@code invalid_input}: required covered components
      * @param supportedAlgorithms for {@code unsupported_algorithm}: supported algorithms
      */
-    public static String build(String error, List<String> requiredInput, List<String> supportedAlgorithms) {
+    public static String build(
+            String error, @Nullable List<String> requiredInput, @Nullable List<String> supportedAlgorithms) {
         StringBuilder sb = new StringBuilder("error=").append(error);
         if (requiredInput != null && !requiredInput.isEmpty() && ErrorCodes.ERROR_INVALID_INPUT.equals(error)) {
             sb.append(", required_input=(").append(quotedList(requiredInput)).append(')');
@@ -41,7 +46,7 @@ public final class SignatureErrorHeader {
 
     /** Parses a {@code Signature-Error} header value. */
     public static Parsed parse(String headerValue) {
-        String error = null;
+        @Nullable String error = null;
         Matcher errorMatcher = ERROR_PATTERN.matcher(headerValue);
         if (errorMatcher.find()) {
             error = errorMatcher.group(1);
@@ -50,7 +55,7 @@ public final class SignatureErrorHeader {
                 error, innerList(headerValue, "required_input"), innerList(headerValue, "supported_algorithms"));
     }
 
-    private static List<String> innerList(String headerValue, String paramName) {
+    private static @Nullable List<String> innerList(String headerValue, String paramName) {
         Matcher matcher = Pattern.compile(paramName + "=\\(([^)]+)\\)").matcher(headerValue);
         if (!matcher.find()) {
             return null;

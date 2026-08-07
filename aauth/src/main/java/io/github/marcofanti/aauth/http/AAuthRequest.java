@@ -1,6 +1,7 @@
 package io.github.marcofanti.aauth.http;
 
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Framework-agnostic HTTP request representation.
@@ -33,7 +34,7 @@ public record AAuthRequest(
     }
 
     /** Case-insensitive header lookup; returns {@code null} when absent. */
-    public String getHeader(String name) {
+    public @Nullable String getHeader(String name) {
         String direct = headers.get(name);
         if (direct != null) {
             return direct;

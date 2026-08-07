@@ -6,6 +6,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Deferred response handling per AAuth spec §10.
@@ -57,13 +58,13 @@ public final class DeferredResponses {
     public record PendingSpec(
             String location,
             String status,
-            String require,
-            String code,
-            String url,
-            String clarification,
-            List<String> requiredClaims,
-            Integer clarificationTimeout,
-            List<String> clarificationOptions,
+            @Nullable String require,
+            @Nullable String code,
+            @Nullable String url,
+            @Nullable String clarification,
+            @Nullable List<String> requiredClaims,
+            @Nullable Integer clarificationTimeout,
+            @Nullable List<String> clarificationOptions,
             int retryAfter) {
 
         public PendingSpec {
@@ -80,14 +81,14 @@ public final class DeferredResponses {
         /** Builder for {@link PendingSpec}. */
         public static final class Builder {
             private final String location;
-            private String status;
-            private String require;
-            private String code;
-            private String url;
-            private String clarification;
-            private List<String> requiredClaims;
-            private Integer clarificationTimeout;
-            private List<String> clarificationOptions;
+            private @Nullable String status;
+            private @Nullable String require;
+            private @Nullable String code;
+            private @Nullable String url;
+            private @Nullable String clarification;
+            private @Nullable List<String> requiredClaims;
+            private @Nullable Integer clarificationTimeout;
+            private @Nullable List<String> clarificationOptions;
             private int retryAfter;
 
             private Builder(String location) {
@@ -142,7 +143,7 @@ public final class DeferredResponses {
             public PendingSpec build() {
                 return new PendingSpec(
                         location,
-                        status,
+                        status == null ? "pending" : status,
                         require,
                         code,
                         url,
@@ -234,14 +235,16 @@ public final class DeferredResponses {
 
     /** A parsed 202 pending body. Unrecognized status values normalize to {@code pending}. */
     public record PendingResponse(
-            String status, String location, String requirement, String code, String clarification) {}
+            String status,
+            @Nullable String location,
+            @Nullable String requirement,
+            @Nullable String code,
+            @Nullable String clarification) {}
 
     /** Parses a pending response body from a server. */
     public static PendingResponse parsePendingResponse(Map<String, Object> body) {
-        String status = str(body.get("status"));
-        if (!"pending".equals(status) && !"interacting".equals(status)) {
-            status = "pending";
-        }
+        String rawStatus = str(body.get("status"));
+        String status = "interacting".equals(rawStatus) ? "interacting" : "pending";
         String requirement = str(body.get("requirement"));
         if (requirement == null) {
             requirement = str(body.get("require"));
@@ -283,11 +286,11 @@ public final class DeferredResponses {
         throw new IllegalArgumentException("Request parameters don't match any known token endpoint mode");
     }
 
-    private static boolean present(Object value) {
+    private static boolean present(@Nullable Object value) {
         return value != null && !value.toString().isEmpty();
     }
 
-    private static String str(Object value) {
+    private static @Nullable String str(@Nullable Object value) {
         return value == null ? null : value.toString();
     }
 }

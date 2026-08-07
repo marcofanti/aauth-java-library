@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 
 /** Resource token ({@code aa-resource+jwt}) creation and verification per AAuth spec §8.1. */
 public final class ResourceTokens {
@@ -40,9 +41,9 @@ public final class ResourceTokens {
             String scope,
             PrivateKey privateKey,
             String kid,
-            Long exp,
-            Map<String, Object> mission,
-            String account) {
+            @Nullable Long exp,
+            @Nullable Map<String, Object> mission,
+            @Nullable String account) {
 
         public Spec {
             if (iss == null
@@ -101,9 +102,9 @@ public final class ResourceTokens {
     public static Map<String, Object> verify(
             String token,
             Function<String, Map<String, Object>> jwksFetcher,
-            String expectedAud,
-            String expectedAgent,
-            String expectedAgentJkt) {
+            @Nullable String expectedAud,
+            @Nullable String expectedAgent,
+            @Nullable String expectedAgentJkt) {
         Jwts.Decoded jwt = TokenSupport.parseOrThrow(token, TYPE);
         long now = TokenSupport.nowEpochSeconds();
 

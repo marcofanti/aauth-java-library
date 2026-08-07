@@ -6,6 +6,7 @@ import io.github.marcofanti.aauth.headers.AcceptSignatureHeader;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.List;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Builds AAuth challenges for the resource role.
@@ -39,11 +40,11 @@ public final class ChallengeBuilder {
     public record Spec(
             boolean requireIdentity,
             boolean requireAuthToken,
-            String agentId,
-            PublicKey agentPublicKey,
-            String scope,
-            List<String> components,
-            List<String> algs) {
+            @Nullable String agentId,
+            @Nullable PublicKey agentPublicKey,
+            @Nullable String scope,
+            @Nullable List<String> components,
+            @Nullable List<String> algs) {
 
         /** A pseudonym-level challenge (signature required, no identity). */
         public static Spec pseudonym() {

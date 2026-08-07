@@ -6,6 +6,7 @@ import io.github.marcofanti.aauth.signing.SignRequest;
 import io.github.marcofanti.aauth.signing.SignatureScheme;
 import java.security.KeyPair;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /**
  * High-level request signer for the agent role.
@@ -16,8 +17,8 @@ import java.util.Map;
 public final class AgentRequestSigner {
 
     private final KeyPair keyPair;
-    private final String agentId;
-    private final String agentToken;
+    private final @Nullable String agentId;
+    private final @Nullable String agentToken;
     private final String kid;
     private final String dwk;
 
@@ -39,8 +40,8 @@ public final class AgentRequestSigner {
     /** Builder; {@code kid} defaults to {@code key-1}, {@code dwk} to {@code aauth-agent.json}. */
     public static final class Builder {
         private final KeyPair keyPair;
-        private String agentId;
-        private String agentToken;
+        private @Nullable String agentId;
+        private @Nullable String agentToken;
         private String kid = "key-1";
         private String dwk = "aauth-agent.json";
 
@@ -49,13 +50,13 @@ public final class AgentRequestSigner {
         }
 
         /** Agent identifier (HTTPS URL) — required for the {@code jwks_uri} scheme. */
-        public Builder agentId(String agentId) {
+        public Builder agentId(@Nullable String agentId) {
             this.agentId = agentId;
             return this;
         }
 
         /** Agent token (JWT) — required for the {@code jwt} scheme. */
-        public Builder agentToken(String agentToken) {
+        public Builder agentToken(@Nullable String agentToken) {
             this.agentToken = agentToken;
             return this;
         }
