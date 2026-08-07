@@ -18,6 +18,13 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 
 ## Decision log
 
+- **2026-08-07 — Releases 0.2.2 and 0.2.3**: 0.2.2 shipped the loose `ps`-claim
+  validation (#16 — `Identifiers.validateServerUrl`: token verification accepts any
+  well-formed http(s) `ps` URL, so non-TLS dev/demo origins like
+  `http://ps.uma.lab:8765` verify; HTTPS-in-production is deployment policy, not a
+  token check) plus the DEMO.md repoint to aauth-full-java-demo (#14). It was tagged
+  before the EdDSA JWK tolerance (#15) merged, so 0.2.3 followed immediately from main
+  with #15 included — downstream consumers should pin **0.2.3** and skip 0.2.2.
 - **2026-08-06 — JWK alg EdDSA tolerated on Ed25519 keys**: `Jwk.requireConsistentAlg`
   now accepts the legacy polymorphic `EdDSA` when the key is `OKP/Ed25519` (rejected on
   any other shape). Rationale: the pre-draft-10 ecosystem — including the Python
