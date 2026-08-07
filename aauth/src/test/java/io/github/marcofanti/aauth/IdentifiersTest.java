@@ -86,6 +86,16 @@ class IdentifiersTest {
     }
 
     @Test
+    void serverUrlToleratesHttpForDev() {
+        assertThat(Identifiers.validateServerUrl("http://ps.uma.lab:8765")).isEqualTo("http://ps.uma.lab:8765");
+        assertThat(Identifiers.validateServerUrl("https://ps.example")).isEqualTo("https://ps.example");
+        assertThatThrownBy(() -> Identifiers.validateServerUrl("not-a-url")).hasMessageContaining("scheme");
+        assertThatThrownBy(() -> Identifiers.validateServerUrl("ftp://x.example"))
+                .hasMessageContaining("scheme");
+        assertThatThrownBy(() -> Identifiers.validateServerUrl("")).hasMessageContaining("empty");
+    }
+
+    @Test
     void otherUrlOnlyRequiresHttps() {
         assertThat(Identifiers.validateOtherUrl("https://keycloak.uma.lab/jwks.json?v=1"))
                 .isEqualTo("https://keycloak.uma.lab/jwks.json?v=1");

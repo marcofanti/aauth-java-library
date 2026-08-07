@@ -193,11 +193,13 @@ public final class AgentTokens {
             throw new TokenException("Token missing 'cnf.jwk' claim", TYPE);
         }
 
-        // Draft-10 §5.2.4 steps 6-7: validate ps and parent_agent when present.
+        // Draft-10 §5.2.4 steps 6-7: validate ps and parent_agent when present. The ps claim is
+        // checked as a well-formed http(s) server URL (not strict-HTTPS) so non-TLS dev/demo
+        // origins verify; enforcing HTTPS-in-production is a deployment policy, not a token check.
         String ps = jwt.claim("ps");
         if (ps != null) {
             try {
-                Identifiers.validateServerIdentifier(ps);
+                Identifiers.validateServerUrl(ps);
             } catch (IllegalArgumentException e) {
                 throw new TokenException("Invalid 'ps' claim: " + e.getMessage(), TYPE, null, null, e);
             }
