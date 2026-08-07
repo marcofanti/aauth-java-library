@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * {@code Accept-Signature} response header per draft-hardt-httpbis-signature-key §4.1.
@@ -36,7 +37,11 @@ public final class AcceptSignatureHeader {
      * ({@code pseudonym} for jkt, {@code identity} for uri/x509) for challenge-handler
      * compatibility.
      */
-    public record Parsed(String sigkey, List<String> components, String alg, String requirement) {
+    public record Parsed(
+            @Nullable String sigkey,
+            List<String> components,
+            @Nullable String alg,
+            @Nullable String requirement) {
         public Parsed {
             components = List.copyOf(components);
         }
@@ -50,7 +55,7 @@ public final class AcceptSignatureHeader {
      * @param components covered components; defaults to {@code @method @authority @path}
      * @param algs acceptable algorithms; a single entry is emitted as the {@code alg} parameter
      */
-    public static String build(String sigkey, List<String> components, List<String> algs) {
+    public static String build(String sigkey, @Nullable List<String> components, @Nullable List<String> algs) {
         List<String> comps = components == null || components.isEmpty() ? DEFAULT_COMPONENTS : components;
         StringBuilder inner = new StringBuilder();
         for (int i = 0; i < comps.size(); i++) {
@@ -69,7 +74,7 @@ public final class AcceptSignatureHeader {
     /** Parses an {@code Accept-Signature} header value. */
     public static Parsed parse(String headerValue) {
         String sigkey = null;
-        String requirement = null;
+        @Nullable String requirement = null;
         Matcher sigkeyMatcher = SIGKEY_PATTERN.matcher(headerValue);
         if (sigkeyMatcher.find()) {
             sigkey = sigkeyMatcher.group(1);

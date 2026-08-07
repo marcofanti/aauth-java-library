@@ -8,6 +8,7 @@ import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Polling state machine for deferred responses per AAuth spec §10.6.
@@ -45,11 +46,11 @@ public final class Poller {
     /** Outcome of polling a pending URL. */
     public record PollingResult(
             boolean success,
-            String authToken,
+            @Nullable String authToken,
             Map<String, Object> responseBody,
             int statusCode,
-            String error,
-            String errorDescription) {}
+            @Nullable String error,
+            @Nullable String errorDescription) {}
 
     /**
      * Parameters for {@link #poll(Request)}.
@@ -70,9 +71,9 @@ public final class Poller {
             SignedGet signedGet,
             int maxPolls,
             int defaultWaitSeconds,
-            BiConsumer<String, String> onInteraction,
-            BiFunction<String, String, String> onClarification,
-            SignedPost signedPost,
+            @Nullable BiConsumer<String, String> onInteraction,
+            @Nullable BiFunction<String, String, String> onClarification,
+            @Nullable SignedPost signedPost,
             Sleeper sleeper) {
 
         public Request {
@@ -94,10 +95,10 @@ public final class Poller {
             private final SignedGet signedGet;
             private int maxPolls = 60;
             private int defaultWaitSeconds = 2;
-            private BiConsumer<String, String> onInteraction;
-            private BiFunction<String, String, String> onClarification;
-            private SignedPost signedPost;
-            private Sleeper sleeper;
+            private @Nullable BiConsumer<String, String> onInteraction;
+            private @Nullable BiFunction<String, String, String> onClarification;
+            private @Nullable SignedPost signedPost;
+            private @Nullable Sleeper sleeper;
 
             private Builder(String pendingUrl, SignedGet signedGet) {
                 this.pendingUrl = pendingUrl;
@@ -114,22 +115,22 @@ public final class Poller {
                 return this;
             }
 
-            public Builder onInteraction(BiConsumer<String, String> onInteraction) {
+            public Builder onInteraction(@Nullable BiConsumer<String, String> onInteraction) {
                 this.onInteraction = onInteraction;
                 return this;
             }
 
-            public Builder onClarification(BiFunction<String, String, String> onClarification) {
+            public Builder onClarification(@Nullable BiFunction<String, String, String> onClarification) {
                 this.onClarification = onClarification;
                 return this;
             }
 
-            public Builder signedPost(SignedPost signedPost) {
+            public Builder signedPost(@Nullable SignedPost signedPost) {
                 this.signedPost = signedPost;
                 return this;
             }
 
-            public Builder sleeper(Sleeper sleeper) {
+            public Builder sleeper(@Nullable Sleeper sleeper) {
                 this.sleeper = sleeper;
                 return this;
             }
@@ -143,7 +144,7 @@ public final class Poller {
                         onInteraction,
                         onClarification,
                         signedPost,
-                        sleeper);
+                        sleeper == null ? Poller::sleepSeconds : sleeper);
             }
         }
     }
@@ -276,7 +277,7 @@ public final class Poller {
      * Extracts the user-facing interaction URL from the AAuth-Requirement header, appending the
      * code as a query parameter; falls back to the pending URL.
      */
-    static String extractInteractionUrl(String aauthRequirementHeader, String code, String pendingUrl) {
+    static String extractInteractionUrl(@Nullable String aauthRequirementHeader, String code, String pendingUrl) {
         if (aauthRequirementHeader == null || aauthRequirementHeader.isEmpty()) {
             return pendingUrl;
         }
@@ -318,7 +319,7 @@ public final class Poller {
         return fallback;
     }
 
-    private static String header(PollResponse response, String name) {
+    private static @Nullable String header(PollResponse response, String name) {
         for (Map.Entry<String, String> entry : response.headers().entrySet()) {
             if (entry.getKey().equalsIgnoreCase(name)) {
                 return entry.getValue();
@@ -327,7 +328,8 @@ public final class Poller {
         return null;
     }
 
-    private static PollingResult failure(int status, Map<String, Object> body, String error, String description) {
+    private static PollingResult failure(
+            int status, @Nullable Map<String, Object> body, String error, @Nullable String description) {
         return new PollingResult(false, null, body == null ? Map.of() : body, status, error, description);
     }
 
@@ -336,16 +338,16 @@ public final class Poller {
         return error == null ? fallback : error.toString();
     }
 
-    private static String description(Map<String, Object> body) {
+    private static @Nullable String description(Map<String, Object> body) {
         Object description = body.get("error_description");
         return description == null ? null : description.toString();
     }
 
-    private static String str(Object value) {
+    private static @Nullable String str(@Nullable Object value) {
         return value == null ? null : value.toString();
     }
 
-    private static String firstNonNull(String a, String b) {
+    private static @Nullable String firstNonNull(@Nullable String a, @Nullable String b) {
         return a != null ? a : b;
     }
 }

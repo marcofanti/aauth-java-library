@@ -6,6 +6,7 @@ import io.github.marcofanti.aauth.tokens.ResourceTokens;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /** Issues resource tokens ({@code aa-resource+jwt}) for agents (resource role). */
 public final class ResourceTokenIssuer {
@@ -38,7 +39,7 @@ public final class ResourceTokenIssuer {
      * @param exp expiration (Unix seconds), or {@code null} for the 10-minute default
      * @throws TokenException if token creation fails
      */
-    public String issueToken(String agentId, PublicKey agentPublicKey, String scope, Long exp) {
+    public String issueToken(String agentId, PublicKey agentPublicKey, String scope, @Nullable Long exp) {
         try {
             Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentPublicKey, null);
             String agentJkt = Jwk.thumbprint(agentJwk);

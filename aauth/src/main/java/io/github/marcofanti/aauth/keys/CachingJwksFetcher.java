@@ -5,6 +5,7 @@ import java.time.Clock;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import org.jspecify.annotations.Nullable;
 
 /**
  * JWKS fetcher with caching, re-fetch on unknown {@code kid}, and per-issuer rate limiting.
@@ -94,7 +95,7 @@ public final class CachingJwksFetcher {
 
     /** Finds a key in a JWKS by {@code kid}; returns {@code null} when absent. */
     @SuppressWarnings("unchecked")
-    public static Map<String, Object> getKeyByKid(Map<String, Object> jwks, String kid) {
+    public static @Nullable Map<String, Object> getKeyByKid(Map<String, Object> jwks, String kid) {
         if (jwks.get("keys") instanceof List<?> keys) {
             for (Object key : keys) {
                 if (key instanceof Map<?, ?> keyMap && kid.equals(keyMap.get("kid"))) {

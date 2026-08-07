@@ -7,6 +7,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import org.jspecify.annotations.Nullable;
 
 /**
  * AAuth protocol headers: requirement levels, challenge building/parsing, capabilities, access
@@ -66,16 +67,16 @@ public final class AAuthHeaders {
      * {@code null} (lists empty).
      */
     public record ParsedChallenge(
-            String requirement,
-            String resourceToken,
-            String authServer,
-            String url,
-            String code,
-            List<String> algorithms,
-            List<String> requiredInput,
-            String sigkey,
-            List<String> components,
-            String alg) {
+            @Nullable String requirement,
+            @Nullable String resourceToken,
+            @Nullable String authServer,
+            @Nullable String url,
+            @Nullable String code,
+            @Nullable List<String> algorithms,
+            @Nullable List<String> requiredInput,
+            @Nullable String sigkey,
+            @Nullable List<String> components,
+            @Nullable String alg) {
 
         public ParsedChallenge {
             components = components == null ? List.of() : List.copyOf(components);
@@ -278,7 +279,7 @@ public final class AAuthHeaders {
      * Extracts the opaque token from an {@code Authorization: AAuth <token>} request header.
      * Returns {@code null} when the header is not an AAuth bearer.
      */
-    public static String parseAuthorizationAAuthHeader(String headerValue) {
+    public static @Nullable String parseAuthorizationAAuthHeader(String headerValue) {
         if (headerValue != null
                 && headerValue.toLowerCase(java.util.Locale.ROOT).startsWith("aauth ")) {
             String token = headerValue.substring(6).strip();
@@ -288,7 +289,8 @@ public final class AAuthHeaders {
     }
 
     /** Parsed {@code AAuth-Mission} header. */
-    public record Mission(String approver, String s256) {}
+    public record Mission(
+            @Nullable String approver, @Nullable String s256) {}
 
     /** Builds an {@code AAuth-Mission} request header value per spec §8.2. */
     public static String buildMissionHeader(String approver, String s256) {
@@ -306,12 +308,12 @@ public final class AAuthHeaders {
 
     // --- Helpers ---------------------------------------------------------------------------
 
-    private static String quotedParam(String headerValue, String name) {
+    private static @Nullable String quotedParam(String headerValue, String name) {
         Matcher matcher = Pattern.compile(name + "=\"([^\"]+)\"").matcher(headerValue);
         return matcher.find() ? matcher.group(1) : null;
     }
 
-    private static List<String> innerList(String headerValue, String paramName) {
+    private static @Nullable List<String> innerList(String headerValue, String paramName) {
         Matcher matcher = Pattern.compile(paramName + "=\\(([^)]+)\\)").matcher(headerValue);
         if (!matcher.find()) {
             return null;

@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 
 /** Agent token ({@code aa-agent+jwt}) creation and verification per AAuth spec §7.1 / §16.2.1. */
 public final class AgentTokens {
@@ -36,11 +37,11 @@ public final class AgentTokens {
             Map<String, Object> cnfJwk,
             PrivateKey privateKey,
             String kid,
-            Long exp,
-            Object aud,
-            String audSub,
-            String ps,
-            String parentAgent) {
+            @Nullable Long exp,
+            @Nullable Object aud,
+            @Nullable String audSub,
+            @Nullable String ps,
+            @Nullable String parentAgent) {
 
         public Spec {
             if (iss == null || sub == null || cnfJwk == null || privateKey == null || kid == null) {
@@ -59,11 +60,11 @@ public final class AgentTokens {
             private final Map<String, Object> cnfJwk;
             private final PrivateKey privateKey;
             private final String kid;
-            private Long exp;
-            private Object aud;
-            private String audSub;
-            private String ps;
-            private String parentAgent;
+            private @Nullable Long exp;
+            private @Nullable Object aud;
+            private @Nullable String audSub;
+            private @Nullable String ps;
+            private @Nullable String parentAgent;
 
             private Builder(String iss, String sub, Map<String, Object> cnfJwk, PrivateKey privateKey, String kid) {
                 this.iss = iss;

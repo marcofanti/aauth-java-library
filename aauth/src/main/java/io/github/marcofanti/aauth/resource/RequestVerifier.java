@@ -12,6 +12,7 @@ import io.github.marcofanti.aauth.signing.VerifyRequest;
 import java.net.URI;
 import java.util.List;
 import java.util.Map;
+import org.jspecify.annotations.Nullable;
 
 /** Verifies incoming signed requests for the resource role. */
 public final class RequestVerifier {
@@ -38,14 +39,14 @@ public final class RequestVerifier {
      */
     public record Result(
             boolean valid,
-            String agentId,
-            Map<String, Object> act,
-            String userSub,
-            List<String> scopes,
-            AAuthHeaders.Mission mission,
-            String error) {
+            @Nullable String agentId,
+            @Nullable Map<String, Object> act,
+            @Nullable String userSub,
+            @Nullable List<String> scopes,
+            AAuthHeaders.@Nullable Mission mission,
+            @Nullable String error) {
 
-        static Result failure(String error) {
+        static Result failure(@Nullable String error) {
             return new Result(false, null, null, null, null, null, error);
         }
     }
@@ -181,7 +182,7 @@ public final class RequestVerifier {
         return new Result(true, agentId, act, userSub, scopes, mission, null);
     }
 
-    private static String header(Map<String, String> headers, String name) {
+    private static @Nullable String header(Map<String, String> headers, String name) {
         for (Map.Entry<String, String> entry : headers.entrySet()) {
             if (entry.getKey().equalsIgnoreCase(name)) {
                 return entry.getValue();
