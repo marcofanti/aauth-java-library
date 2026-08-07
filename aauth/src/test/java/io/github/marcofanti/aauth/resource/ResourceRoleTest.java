@@ -117,7 +117,7 @@ class ResourceRoleTest {
         // Regression: a validly signed auth token with scope "" must not pass requireAuthToken.
         Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
         Map<String, Object> header =
-                new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "EdDSA", "kid", "as-key-1"));
+                new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "Ed25519", "kid", "as-key-1"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", AUTH_SERVER);
         payload.put("agent", AGENT_ID);

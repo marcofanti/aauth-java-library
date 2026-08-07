@@ -57,6 +57,26 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 - **2026-07-30 — JUnit 6.1.2**: current stable line; validated with a toolchain smoke test
   in phase 1.
 
+## STRICT draft-10 alg — STAGED, NOT MERGED (branch `strict-alg-draft10`)
+
+A branch that flips the transition tolerances to strict draft-10, prepared **ahead of the
+ecosystem** and deliberately **not merged**:
+
+- `Jwts` / `TokenSupport`: token headers must be `Ed25519`; legacy `EdDSA` is rejected.
+- `Jwk.requireConsistentAlg`: legacy polymorphic `EdDSA` in a JWK is rejected (falls through
+  to unsupported-alg). Absent `alg` is still tolerated — the draft-10 "MUST reject absent
+  alg" rule is intentionally left for merge time, aligned with the ecosystem's actual JWK
+  emission (it reorders `toPublicKey` error semantics and is the most likely detail to change).
+- Tests updated to assert strict rejection; `PythonInteropTest.pythonAuthTokenVerifiesInJava`
+  now asserts the Python (EdDSA) token is **rejected** — flip back to positive verification
+  when Python emits `Ed25519`.
+
+**Gate to merge:** the Python reference library (and the rest of the ecosystem — person
+server, demo) must be on draft-10 (emit `Ed25519`). As of 2026-08-07 the Python lib is still
+pre-10 (`aauth 0.3.5`, emits/verifies `EdDSA`, last upstream commit 2026-06-16). Merging
+before then breaks all Python interop, including the demo's polyglot step. Rebase this branch
+onto main and re-validate against Python's actual draft-10 wire format when the gate opens.
+
 ## AAuth draft-10 compliance (2026-08-06)
 
 Protocol draft **-10** and Signature-Keys draft **-08** introduced normative changes (driven

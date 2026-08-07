@@ -32,9 +32,8 @@ final class TokenSupport {
             throw new TokenException("Token header missing 'kid'", tokenType);
         }
         Object alg = jwt.header().get("alg");
-        // Draft-10 tokens carry the fully-specified "Ed25519" (RFC 9864); the polymorphic
-        // "EdDSA" is accepted as legacy during the transition.
-        if (!"Ed25519".equals(alg) && !"EdDSA".equals(alg)) {
+        // STRICT draft-10: only the fully-specified "Ed25519" (RFC 9864); legacy "EdDSA" removed.
+        if (!"Ed25519".equals(alg)) {
             throw new TokenException("Unsupported token alg: expected Ed25519, got " + alg, tokenType);
         }
 

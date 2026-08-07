@@ -101,15 +101,11 @@ public final class Jwk {
      */
     public static void requireConsistentAlg(Map<String, Object> jwk) {
         String alg = str(jwk, "alg");
+        // Absent alg is still tolerated (finalize the draft-10 "MUST reject absent alg" rule at
+        // merge time, aligned with the ecosystem's actual JWK emission). The legacy polymorphic
+        // EdDSA is no longer accepted: it falls through to the unsupported-alg rejection below.
         if (alg == null) {
             return;
-        }
-        if ("EdDSA".equals(alg)) {
-            if ("OKP".equals(str(jwk, "kty")) && "Ed25519".equals(str(jwk, "crv"))) {
-                return;
-            }
-            throw new IllegalArgumentException(
-                    "JWK alg EdDSA requires an OKP/Ed25519 key, got " + str(jwk, "kty") + "/" + str(jwk, "crv"));
         }
         String shape = ALG_TO_KEY_SHAPE.get(alg);
         if (shape == null) {
