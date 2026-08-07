@@ -163,6 +163,31 @@ public final class Identifiers {
         return url;
     }
 
+    /**
+     * Validates a server URL loosely for token-claim checks: an absolute {@code http(s)} URL
+     * with a host. Unlike {@link #validateServerIdentifier}, this tolerates {@code http} and a
+     * port so dev/demo deployments on non-TLS hosts (e.g. {@code http://ps.uma.lab:8765}) are
+     * accepted. The draft-10 requirement that a production {@code ps} be HTTPS is a deployment
+     * policy, not a reason to fail token verification.
+     *
+     * @return the URL unchanged when valid
+     * @throws IllegalArgumentException if the URL is not an absolute http(s) URL with a host
+     */
+    public static String validateServerUrl(String url) {
+        if (url == null || url.isEmpty()) {
+            throw new IllegalArgumentException("Server URL must not be empty");
+        }
+        URI uri = parseUri(url, "Server URL");
+        String scheme = uri.getScheme();
+        if (!"https".equals(scheme) && !"http".equals(scheme)) {
+            throw new IllegalArgumentException("Server URL must use http or https scheme: " + url);
+        }
+        if (uri.getHost() == null) {
+            throw new IllegalArgumentException("Server URL must have a hostname: " + url);
+        }
+        return url;
+    }
+
     private static URI parseUri(String url, String what) {
         try {
             return URI.create(url);

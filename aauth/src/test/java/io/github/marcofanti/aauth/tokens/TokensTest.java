@@ -208,9 +208,18 @@ class TokensTest {
         assertThat(AgentTokens.verify(valid, issuerJwksFetcher, null))
                 .containsEntry("parent_agent", "aauth:parent@portal.uma.lab");
 
+        // Non-TLS dev/demo origins for ps are accepted (http + port), not rejected.
+        String httpDevPs = AgentTokens.create(
+                AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
+                        .ps("http://ps.uma.lab:8765")
+                        .build());
+        assertThat(AgentTokens.verify(httpDevPs, issuerJwksFetcher, null))
+                .containsEntry("ps", "http://ps.uma.lab:8765");
+
+        // A malformed ps (no scheme/host) is still rejected.
         String badPs = AgentTokens.create(
                 AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
-                        .ps("http://ps.uma.lab:8080/path")
+                        .ps("not-a-url")
                         .build());
         assertThatThrownBy(() -> AgentTokens.verify(badPs, issuerJwksFetcher, null))
                 .isInstanceOf(TokenException.class)
