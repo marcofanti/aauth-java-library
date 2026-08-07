@@ -147,18 +147,11 @@ class JwkTest {
         withoutAlg.remove("alg");
         assertThat(Jwk.toPublicKey(withoutAlg).getAlgorithm()).isEqualTo("EdDSA");
 
-        // Legacy polymorphic EdDSA on an Ed25519 key is tolerated during the draft-10
-        // transition (pre-10 peers, including the Python reference, emit it in JWKS) —
-        // same policy as token-header verification.
+        // STRICT draft-10: the polymorphic EdDSA is rejected on any key — it is not a
+        // fully-specified identifier (RFC 9864).
         Map<String, Object> legacyEddsa = new java.util.LinkedHashMap<>(base);
         legacyEddsa.put("alg", "EdDSA");
-        assertThat(Jwk.toPublicKey(legacyEddsa).getAlgorithm()).isEqualTo("EdDSA");
-
-        // EdDSA on a non-Ed25519 key, symmetric and mismatched algs are rejected.
-        Map<String, Object> eddsaOnEc = new java.util.LinkedHashMap<>(
-                Jwk.publicKeyToJwk(KeyPairs.generateEcP256().getPublic(), null));
-        eddsaOnEc.put("alg", "EdDSA");
-        assertThatThrownBy(() -> Jwk.toPublicKey(eddsaOnEc))
+        assertThatThrownBy(() -> Jwk.toPublicKey(legacyEddsa))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("EdDSA");
         Map<String, Object> symmetric = new java.util.LinkedHashMap<>(base);

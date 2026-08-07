@@ -208,7 +208,7 @@ class SignVerifyRoundTripTest {
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "aa-auth+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "https://alice-as.uma.lab");
@@ -237,7 +237,7 @@ class SignVerifyRoundTripTest {
         KeyPair agentKeyPair = KeyPairs.generateEd25519();
 
         Map<String, Object> header = new LinkedHashMap<>();
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "https://alice-as.uma.lab");
@@ -264,7 +264,7 @@ class SignVerifyRoundTripTest {
         Map<String, Object> enclaveJwk = Jwk.publicKeyToJwk(enclaveKeyPair.getPublic(), null);
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "jkt-s256+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("jwk", enclaveJwk);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "urn:jkt:sha-256:" + Jwk.thumbprint(enclaveJwk));
@@ -290,7 +290,7 @@ class SignVerifyRoundTripTest {
         Map<String, Object> enclaveJwk = Jwk.publicKeyToJwk(enclaveKeyPair.getPublic(), null);
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "jkt-s256+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("jwk", enclaveJwk);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "urn:jkt:sha-256:WRONG");

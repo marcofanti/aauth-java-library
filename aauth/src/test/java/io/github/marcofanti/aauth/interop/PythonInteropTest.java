@@ -1,6 +1,7 @@
 package io.github.marcofanti.aauth.interop;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -184,16 +185,21 @@ class PythonInteropTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> jwks = (Map<String, Object>) data.get("jwks");
 
-        Map<String, Object> claims = AuthTokens.verifyToken(
-                data.get("token").toString(),
-                iss -> jwks,
-                new AuthTokens.VerifyOptions(
-                        AuthTokens.TYPE,
-                        "https://alice-as.uma.lab",
-                        "https://gateway.uma.lab",
-                        "aauth:agent@portal.uma.lab",
-                        null));
-
-        assertThat(claims).containsEntry("scope", "data.read");
+        // STRICT draft-10: the Python reference is still pre-10 and mints auth tokens with the
+        // polymorphic alg `EdDSA`, which strict Java verification rejects. This is the expected
+        // behavior of the strict branch — it is precisely why the flip is gated on the Python
+        // library reaching draft-10. When Python emits `Ed25519`, restore the positive
+        // assertion (verifyToken returns the claims with scope=data.read).
+        assertThatThrownBy(() -> AuthTokens.verifyToken(
+                        data.get("token").toString(),
+                        iss -> jwks,
+                        new AuthTokens.VerifyOptions(
+                                AuthTokens.TYPE,
+                                "https://alice-as.uma.lab",
+                                "https://gateway.uma.lab",
+                                "aauth:agent@portal.uma.lab",
+                                null)))
+                .isInstanceOf(io.github.marcofanti.aauth.TokenException.class)
+                .hasMessageContaining("Ed25519");
     }
 }

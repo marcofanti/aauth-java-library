@@ -104,9 +104,9 @@ public final class Jwts {
         }
         String jdkAlgorithm =
                 switch (alg.toString()) {
-                    // "Ed25519" is the fully-specified identifier (RFC 9864, AAuth draft-10);
-                    // the polymorphic "EdDSA" is accepted as legacy during the transition.
-                    case "Ed25519", "EdDSA" -> "Ed25519";
+                    // STRICT draft-10: only the fully-specified "Ed25519" (RFC 9864). The legacy
+                    // polymorphic "EdDSA" is no longer accepted.
+                    case "Ed25519" -> "Ed25519";
                     case "ES256" -> "SHA256withECDSAinP1363Format";
                     case "ES384" -> "SHA384withECDSAinP1363Format";
                     case "RS256" -> "SHA256withRSA";
