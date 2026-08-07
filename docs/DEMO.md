@@ -17,8 +17,8 @@ contract those projects depend on.
 ## 1. Library state as of 2026-08-06
 
 Coordinates: `io.github.marcofanti:aauth` and `io.github.marcofanti:aauth-signing`.
-`0.2.1` (Apache-2.0) is the current release; `main` is `0.3.0-SNAPSHOT`. Java 26+, Jackson is
-the only third-party runtime dependency. 213 tests, CI green.
+`0.2.2` (Apache-2.0) is the current release; `main` is `0.3.0-SNAPSHOT`. Java 26+, Jackson is
+the only third-party runtime dependency. 215 tests, CI green.
 
 ### Implemented today (2026-08-06)
 
