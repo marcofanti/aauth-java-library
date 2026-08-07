@@ -18,6 +18,15 @@ Status of each phase from [PLAN.md](PLAN.md). Updated as work lands.
 
 ## Decision log
 
+- **2026-08-06 — JWK alg EdDSA tolerated on Ed25519 keys**: `Jwk.requireConsistentAlg`
+  now accepts the legacy polymorphic `EdDSA` when the key is `OKP/Ed25519` (rejected on
+  any other shape). Rationale: the pre-draft-10 ecosystem — including the Python
+  reference's clients — emits `alg: EdDSA` in JWKS, and the 0.2.x hard reject broke
+  Java-verifies-Python resource tokens (found live: the person server's mode-3 interop
+  script failed with "Forbidden or unsupported JWK alg: EdDSA"). This matches the
+  token-header transition policy (accepts `Ed25519` and legacy `EdDSA`); both tolerances
+  flip to strict together once the ecosystem is on draft-10.
+
 - **2026-07-30 — Java baseline raised to 26** (user request, mid-implementation): compiler
   `--release 26`, enforcer requires Java 26+. Code written against the 17 baseline compiles
   unchanged; newer language features may be used from here on.
