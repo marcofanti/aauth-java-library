@@ -89,10 +89,13 @@ public final class Jwk {
     /**
      * Validates a JWK's {@code alg} member per AAuth draft-10 §12.8.1 / RFC 9864.
      *
-     * <p>Transition tolerance: an absent {@code alg} is currently allowed (legacy peers).
-     * When present it MUST be a supported fully-specified identifier — the polymorphic
-     * {@code EdDSA}, {@code none} and symmetric algorithms are rejected — and MUST agree with
-     * the key's {@code kty}/{@code crv}.
+     * <p>Transition tolerance: an absent {@code alg} is currently allowed, and the legacy
+     * polymorphic {@code EdDSA} is accepted on an Ed25519 key — pre-draft-10 peers
+     * (including the Python reference) emit it in JWKS, and token-header verification
+     * already applies the same policy. Any other present {@code alg} MUST be a supported
+     * fully-specified identifier ({@code none} and symmetric algorithms are rejected) and
+     * MUST agree with the key's {@code kty}/{@code crv}. Both tolerances flip to strict
+     * once the ecosystem is on draft-10.
      *
      * @throws IllegalArgumentException if the alg is forbidden, unsupported, or inconsistent
      */
@@ -100,6 +103,13 @@ public final class Jwk {
         String alg = str(jwk, "alg");
         if (alg == null) {
             return;
+        }
+        if ("EdDSA".equals(alg)) {
+            if ("OKP".equals(str(jwk, "kty")) && "Ed25519".equals(str(jwk, "crv"))) {
+                return;
+            }
+            throw new IllegalArgumentException(
+                    "JWK alg EdDSA requires an OKP/Ed25519 key, got " + str(jwk, "kty") + "/" + str(jwk, "crv"));
         }
         String shape = ALG_TO_KEY_SHAPE.get(alg);
         if (shape == null) {
