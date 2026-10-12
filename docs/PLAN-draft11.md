@@ -71,19 +71,18 @@ Each phase lands on `draft11` behind `mvn verify` (tests + JaCoCo 80% + Spotless
 - [ ] **`TokenSupport.verifySignatureViaIssuer`** — unchanged interface; still Ed25519 + legacy
   EdDSA tolerant (strict flip is Phase D).
 
-### Phase B — Resource role: person-token challenge + verifier rewrite
+### Phase B — Resource role: person-token challenge + verifier rewrite — DONE
 
-- [ ] **`ChallengeBuilder`** — add a `personToken()` spec emitting `AAuth-Requirement:
+- [x] **`ChallengeBuilder`** — added a `personToken()` spec emitting `AAuth-Requirement:
   requirement=person-token` (no params). (RS-11, RS-20)
-- [ ] **`RequestVerifier`** — verify a person token or auth token before success; with neither on the
-  authorization path, surface `requirement=person-token`. `Result` drops `act`; mission comes from
-  the verified person token's `mission_s256`, not the header. Stop reading `AAuth-Mission` and the
-  `aauth-mission` covered component. Keep the new `sub`/`ps`. (RS-10, RS-20, RS-30, RS-33, RS-40)
-- [ ] **`ResourceTokenIssuer`** — set `aud` from the person token's `iss` (three-party) or the AS
-  (four-party), **not** the agent token's `ps`; copy `sub`, `presented_jti`, `mission_s256`,
-  `tenant`. (RS-31, RS-32)
-- [ ] **Retire `MissionBinding` + `AAuth-Mission` enforcement** once the mission source moves into
-  the person token. Flag the files for deletion (replace, don't deprecate). (RS-33, AG-30)
+- [x] **`RequestVerifier`** — `Result` dropped `act`; mission comes from the presented token's
+  `mission_s256`, not the header; stopped reading `AAuth-Mission` and the `aauth-mission` covered
+  component; surfaces the person `sub`. (RS-10, RS-30, RS-33, RS-40)
+- [x] **`ResourceTokenIssuer`** — issues from a `Grant` whose `aud` is the person token's `iss`
+  (three-party) or the AS (four-party), not the agent token's `ps`; copies `sub`, `presented_jti`,
+  `mission_s256`, `tenant`. (RS-31, RS-32)
+- [x] **Retired `MissionBinding` matching + `AAuth-Mission`** (replace, don't deprecate); kept the
+  still-valid `MissionBinding.s256` hash + a `matches` helper. (RS-33, AG-30)
 
 ### Phase C — Agent role: person-token flow + presented_token + new responses
 

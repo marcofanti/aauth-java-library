@@ -10,8 +10,8 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
- * AAuth protocol headers: requirement levels, challenge building/parsing, capabilities, access
- * tokens and mission binding.
+ * AAuth protocol headers: requirement levels, challenge building/parsing, capabilities and
+ * access tokens.
  *
  * <p>Per draft-hardt-aauth-protocol, the {@code AAuth-Requirement} response header conveys
  * AAuth-specific requirements (auth-token, interaction, approval, clarification, claims);
@@ -41,7 +41,6 @@ public final class AAuthHeaders {
     public static final String HEADER_AAUTH_REQUIREMENT = "AAuth-Requirement";
     public static final String HEADER_AAUTH_ACCESS = "AAuth-Access";
     public static final String HEADER_AAUTH_CAPABILITIES = "AAuth-Capabilities";
-    public static final String HEADER_AAUTH_MISSION = "AAuth-Mission";
     public static final String HEADER_SIGNATURE_ERROR = "Signature-Error";
 
     /** Sigkey draft-08 §4.1: schemes the server accepts (with {@code unsupported_scheme}). */
@@ -298,24 +297,6 @@ public final class AAuthHeaders {
             return token.isEmpty() ? null : token;
         }
         return null;
-    }
-
-    /** Parsed {@code AAuth-Mission} header. */
-    public record Mission(
-            @Nullable String approver, @Nullable String s256) {}
-
-    /** Builds an {@code AAuth-Mission} request header value per spec §8.2. */
-    public static String buildMissionHeader(String approver, String s256) {
-        return "approver=\"" + approver + "\"; s256=\"" + s256 + "\"";
-    }
-
-    /** Parses an {@code AAuth-Mission} header (accepts legacy {@code manager=} for approver). */
-    public static Mission parseMissionHeader(String headerValue) {
-        String approver = quotedParam(headerValue, "approver");
-        if (approver == null) {
-            approver = quotedParam(headerValue, "manager");
-        }
-        return new Mission(approver, quotedParam(headerValue, "s256"));
     }
 
     // --- Helpers ---------------------------------------------------------------------------

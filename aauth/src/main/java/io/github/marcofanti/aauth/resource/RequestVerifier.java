@@ -1,11 +1,9 @@
 package io.github.marcofanti.aauth.resource;
 
-import io.github.marcofanti.aauth.headers.AAuthHeaders;
 import io.github.marcofanti.aauth.signing.HttpSignatureException;
 import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.Jwts;
 import io.github.marcofanti.aauth.signing.SignatureBase;
-import io.github.marcofanti.aauth.signing.SignatureInputHeader;
 import io.github.marcofanti.aauth.signing.SignatureKeyHeader;
 import io.github.marcofanti.aauth.signing.SignatureVerifier;
 import io.github.marcofanti.aauth.signing.VerifyRequest;
@@ -33,16 +31,16 @@ public final class RequestVerifier {
 
     /**
      * Outcome of request verification. When {@code valid} is false, {@code error} explains why;
-     * identity fields are filled in based on the Signature-Key scheme. {@code mission} is the
-     * parsed {@code AAuth-Mission} header when the request carried one (always
-     * signature-covered — see {@link #verifyRequest}).
+     * identity fields are filled in based on the Signature-Key scheme. {@code missionS256} is the
+     * mission binding read from the presented person/auth token's {@code mission_s256} claim
+     * (draft-11 §8 — the {@code AAuth-Mission} header is gone), or {@code null}.
      */
     public record Result(
             boolean valid,
             @Nullable String agentId,
             @Nullable String userSub,
             @Nullable List<String> scopes,
-            AAuthHeaders.@Nullable Mission mission,
+            @Nullable String missionS256,
             @Nullable String error) {
 
         static Result failure(@Nullable String error) {
@@ -123,19 +121,9 @@ public final class RequestVerifier {
             }
         }
 
-        // Spec §Authorization Endpoint Request: a request carrying AAuth-Mission MUST cover it
-        // in the signature; an uncovered mission header could be swapped after signing.
-        AAuthHeaders.Mission mission = null;
-        String missionHeader = header(headers, AAuthHeaders.HEADER_AAUTH_MISSION);
-        if (missionHeader != null) {
-            if (!SignatureInputHeader.parse(signatureInput).components().contains("aauth-mission")) {
-                return Result.failure("aauth-mission header not covered by signature");
-            }
-            mission = AAuthHeaders.parseMissionHeader(missionHeader);
-        }
-
         String agentId = null;
         String userSub = null;
+        String missionS256 = null;
         List<String> scopes = null;
 
         switch (parsedKey.scheme()) {
@@ -152,9 +140,11 @@ public final class RequestVerifier {
                         } else if ("aa-person+jwt".equals(typ)) {
                             // Draft-11 person token: sub identifies the person; no agent claim.
                             userSub = jwt.claim("sub");
+                            missionS256 = jwt.claim("mission_s256");
                         } else if ("aa-auth+jwt".equals(typ)) {
                             // Draft-11 auth token: no 'agent'/'act'; sub identifies the person.
                             userSub = jwt.claim("sub");
+                            missionS256 = jwt.claim("mission_s256");
                             String scope = jwt.claim("scope");
                             // Whitespace-collapsing split, matching Python's str.split(); an
                             // empty or blank scope claim yields no scopes at all.
@@ -179,7 +169,7 @@ public final class RequestVerifier {
             return Result.failure("Auth token required but not present");
         }
 
-        return new Result(true, agentId, userSub, scopes, mission, null);
+        return new Result(true, agentId, userSub, scopes, missionS256, null);
     }
 
     private static @Nullable String header(Map<String, String> headers, String name) {

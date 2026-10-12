@@ -188,16 +188,10 @@ class AAuthHeadersTest {
     }
 
     @Test
-    void missionHeaderRoundTripsAndAcceptsLegacyManager() {
-        String header = AAuthHeaders.buildMissionHeader("https://ps.uma.lab", "abc123");
-        assertThat(header).isEqualTo("approver=\"https://ps.uma.lab\"; s256=\"abc123\"");
-
-        AAuthHeaders.Mission mission = AAuthHeaders.parseMissionHeader(header);
-        assertThat(mission.approver()).isEqualTo("https://ps.uma.lab");
-        assertThat(mission.s256()).isEqualTo("abc123");
-
-        assertThat(AAuthHeaders.parseMissionHeader("manager=\"https://grafana.uma.lab\"; s256=\"x\"")
-                        .approver())
-                .isEqualTo("https://grafana.uma.lab");
+    void personTokenRequirementHasNoParameters() {
+        assertThat(AAuthHeaders.buildPersonTokenRequirement()).isEqualTo("requirement=person-token");
+        assertThat(AAuthHeaders.parseSignatureRequirement("requirement=person-token")
+                        .requirement())
+                .isEqualTo(AAuthHeaders.REQUIRE_PERSON_TOKEN);
     }
 }

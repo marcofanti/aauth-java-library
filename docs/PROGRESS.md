@@ -114,11 +114,20 @@ Java↔Python -11 interop is possible yet.
     is **rejected** by -11 verification, while the signature still verifies untyped (structural
     parity). Flip back to a success check when the Python reference emits draft-11.
 
-- **Deferred (still on draft-10 behavior on this branch)**: the `AAuth-Mission` request header plus
-  `MissionBinding` and its signature-coverage enforcement are intentionally left in place for now —
-  Phase B retires them when the mission source fully moves into the person token (RS-33/AG-30).
-  Phase B/C/D/E (person-token challenge wiring, 202 polling, agent person-token flow, strict
-  Ed25519, revocation `{jti, exp}`, call chaining) are not yet implemented — see PLAN-draft11.md.
+- **Phase B done (mission retirement + resource-role wiring)**:
+  - Retired the `AAuth-Mission` request header: removed `HEADER_AAUTH_MISSION`, the `Mission`
+    record, and `buildMissionHeader`/`parseMissionHeader` from `AAuthHeaders` (RS-33/AG-30). The
+    mission now reaches the resource as the `mission_s256` claim in the presented person/auth token.
+  - `RequestVerifier.Result` replaced the parsed `AAuth-Mission` field with `@Nullable String
+    missionS256`, extracted from the presented token; dropped the header-coverage enforcement.
+  - `MissionBinding` trimmed to the still-valid `s256(blob)` hash plus a `matches(expected, blob)`
+    helper (AG-32); the `approver`-based `matchesDocument`/`matchesClaim` are gone.
+  - `ChallengeBuilder` person-token challenge (`requirement=person-token`) covered by tests.
+
+- **Deferred (Phase C/D/E)**: agent-side person-token flow (request from `person_token_endpoint`,
+  present at the resource, cache), `presented_token` on the token exchange, `requirement=auth-token`
+  as 202 + polling, strict Ed25519 emission, revocation `{jti, exp}`, call chaining. Not yet
+  implemented — see PLAN-draft11.md.
 
 **Cross-repo**: nothing released. The person-server and demo move to -11 against a library SNAPSHOT
 before any release; strict Ed25519 flips when the Python reference reaches -11.
