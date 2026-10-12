@@ -40,14 +40,13 @@ public final class RequestVerifier {
     public record Result(
             boolean valid,
             @Nullable String agentId,
-            @Nullable Map<String, Object> act,
             @Nullable String userSub,
             @Nullable List<String> scopes,
             AAuthHeaders.@Nullable Mission mission,
             @Nullable String error) {
 
         static Result failure(@Nullable String error) {
-            return new Result(false, null, null, null, null, null, error);
+            return new Result(false, null, null, null, null, error);
         }
     }
 
@@ -136,7 +135,6 @@ public final class RequestVerifier {
         }
 
         String agentId = null;
-        Map<String, Object> act = null;
         String userSub = null;
         List<String> scopes = null;
 
@@ -151,10 +149,12 @@ public final class RequestVerifier {
                         if ("aa-agent+jwt".equals(typ)) {
                             // Agent token: sub is the agent (delegate) identifier.
                             agentId = jwt.claim("sub");
-                        } else if ("aa-auth+jwt".equals(typ)) {
-                            agentId = jwt.claim("agent");
+                        } else if ("aa-person+jwt".equals(typ)) {
+                            // Draft-11 person token: sub identifies the person; no agent claim.
                             userSub = jwt.claim("sub");
-                            act = jwt.payload().get("act") instanceof Map<?, ?> actMap ? castMap(actMap) : null;
+                        } else if ("aa-auth+jwt".equals(typ)) {
+                            // Draft-11 auth token: no 'agent'/'act'; sub identifies the person.
+                            userSub = jwt.claim("sub");
                             String scope = jwt.claim("scope");
                             // Whitespace-collapsing split, matching Python's str.split(); an
                             // empty or blank scope claim yields no scopes at all.
@@ -179,7 +179,7 @@ public final class RequestVerifier {
             return Result.failure("Auth token required but not present");
         }
 
-        return new Result(true, agentId, act, userSub, scopes, mission, null);
+        return new Result(true, agentId, userSub, scopes, mission, null);
     }
 
     private static @Nullable String header(Map<String, String> headers, String name) {
@@ -189,13 +189,5 @@ public final class RequestVerifier {
             }
         }
         return null;
-    }
-
-    private static Map<String, Object> castMap(Map<?, ?> map) {
-        Map<String, Object> result = new java.util.LinkedHashMap<>();
-        for (Map.Entry<?, ?> entry : map.entrySet()) {
-            result.put(entry.getKey().toString(), entry.getValue());
-        }
-        return result;
     }
 }

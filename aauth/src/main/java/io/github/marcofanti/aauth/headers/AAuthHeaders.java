@@ -22,6 +22,10 @@ public final class AAuthHeaders {
     // Requirement levels.
     public static final String REQUIRE_PSEUDONYM = "pseudonym";
     public static final String REQUIRE_IDENTITY = "identity";
+
+    /** Draft-11 §6.4: the resource needs a person token before it will authorize. */
+    public static final String REQUIRE_PERSON_TOKEN = "person-token";
+
     public static final String REQUIRE_AUTH_TOKEN = "auth-token";
     public static final String REQUIRE_INTERACTION = "interaction";
     public static final String REQUIRE_APPROVAL = "approval";
@@ -101,6 +105,14 @@ public final class AAuthHeaders {
      */
     public static String buildAuthTokenRequirement(String resourceToken) {
         return "requirement=auth-token; resource-token=\"" + resourceToken + "\"";
+    }
+
+    /**
+     * Builds an {@code AAuth-Requirement} value requiring a person token (draft-11 §6.4). The
+     * header takes no parameters.
+     */
+    public static String buildPersonTokenRequirement() {
+        return "requirement=person-token";
     }
 
     /** Builds an {@code AAuth-Requirement} value for user interaction. */

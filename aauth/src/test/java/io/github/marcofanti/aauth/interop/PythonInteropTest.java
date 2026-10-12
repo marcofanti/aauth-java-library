@@ -1,10 +1,12 @@
 package io.github.marcofanti.aauth.interop;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.marcofanti.aauth.TokenException;
 import io.github.marcofanti.aauth.signing.RequestSigner;
 import io.github.marcofanti.aauth.signing.SignRequest;
 import io.github.marcofanti.aauth.signing.SignatureScheme;
@@ -184,16 +186,21 @@ class PythonInteropTest {
         @SuppressWarnings("unchecked")
         Map<String, Object> jwks = (Map<String, Object>) data.get("jwks");
 
+        // Interop gap: the Python reference is still on draft-10 and emits an auth token with
+        // 'agent'/'act' and no 'sub'. Draft-11 verification requires 'sub' (the person), so a
+        // full aa-auth+jwt verification is REJECTED. This asserts the rejection; flip it back to a
+        // success check once the Python reference emits draft-11 ('sub'/'ps', no 'agent'/'act').
+        assertThatThrownBy(() -> AuthTokens.verifyToken(
+                        data.get("token").toString(), iss -> jwks, AuthTokens.VerifyOptions.forType(AuthTokens.TYPE)))
+                .isInstanceOf(TokenException.class)
+                .hasMessageContaining("sub");
+
+        // The signature itself still verifies cross-stack (structural parity), checked without the
+        // draft-11 claim-model gate by using a non-typed verification.
         Map<String, Object> claims = AuthTokens.verifyToken(
                 data.get("token").toString(),
                 iss -> jwks,
-                new AuthTokens.VerifyOptions(
-                        AuthTokens.TYPE,
-                        "https://alice-as.uma.lab",
-                        "https://gateway.uma.lab",
-                        "aauth:agent@portal.uma.lab",
-                        null));
-
+                new AuthTokens.VerifyOptions(null, "https://alice-as.uma.lab", "https://gateway.uma.lab", null));
         assertThat(claims).containsEntry("scope", "data.read");
     }
 }

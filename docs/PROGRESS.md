@@ -79,6 +79,50 @@ library has not yet updated, so we emit the new wire format while still acceptin
 person server are on draft-10; phase B for the new sigkey-08 schemes (`jwks`, `self-jwt`,
 `cached`, direct x509) and the AAuth §12.8.2 `scheme=jwt`-only rule.
 
+## AAuth draft-11 migration (2026-10-12)
+
+Protocol draft **-11** (2026-09-25) and Signature-Keys draft **-09** (2026-09-13) are out. The
+upstream role-by-role migration guide is at
+<https://github.com/dickhardt/AAuth/tree/main/upgrade-10-to-11>. The approved library plan is
+[PLAN-draft11.md](PLAN-draft11.md). Work lands on branch `draft11` (not merged to `main`).
+
+**Upstream gate**: the Python reference (`../aauth-python-library`, 0.3.5) is still on draft-10 — no
+`person_token`, `presented_token`, `mission_s256`, `auth_token_endpoint`, or `session-token`. So the
+same strategy as the -10 jump applies: **compliant emission, tolerant verification**, and no full
+Java↔Python -11 interop is possible yet.
+
+- **Phase A done (token model + endpoint renames)**:
+  - New `tokens/PersonTokens.java` (`aa-person+jwt`, `dwk aauth-person.json`): per-resource person
+    token with `(iss, sub)` identity, `cnf.jwk` binding, 1-hour lifetime cap and no-skew `exp`
+    (§7.1.4).
+  - `ResourceTokens` reshaped to -11 (§6.7): dropped `agent` and the `mission` object; added
+    REQUIRED `ps`, `sub`, `presented_jti`; added optional `mission_s256`, `tenant`, `login_hint`.
+    `verify` no longer takes/checks an expected agent.
+  - `AuthTokens` reshaped to -11 (§9.4): dropped `agent` and `act`; `sub` is REQUIRED and the person
+    is identified by `(iss, sub)`; added `ps`; mission is now `mission_s256`. Removed the draft-10
+    future-`iat` validity check (RS-51).
+  - `ResourceTokenIssuer` now issues from a `Grant` (presented-token context: `aud`/`ps`/`sub`/
+    `presented_jti`), not an agent identifier.
+  - `ChallengeBuilder` gained a `personToken()` challenge (`requirement=person-token`, §6.4); the
+    auth-token challenge now builds its embedded resource token from a `Grant`.
+  - `RequestVerifier.Result` dropped `act`; auth/person tokens surface the person `sub`; retired the
+    `agent`/`act` extraction.
+  - Metadata: PS doc emits `auth_token_endpoint` (was `token_endpoint`) and new
+    `person_token_endpoint`; `TokenExchange` reads the new name with a legacy fallback.
+  - `AAuthHeaders` gained `REQUIRE_PERSON_TOKEN` + `buildPersonTokenRequirement()`.
+  - Interop: `pythonAuthTokenVerifiesInJava` now asserts the draft-10 Python auth token (no `sub`)
+    is **rejected** by -11 verification, while the signature still verifies untyped (structural
+    parity). Flip back to a success check when the Python reference emits draft-11.
+
+- **Deferred (still on draft-10 behavior on this branch)**: the `AAuth-Mission` request header plus
+  `MissionBinding` and its signature-coverage enforcement are intentionally left in place for now —
+  Phase B retires them when the mission source fully moves into the person token (RS-33/AG-30).
+  Phase B/C/D/E (person-token challenge wiring, 202 polling, agent person-token flow, strict
+  Ed25519, revocation `{jti, exp}`, call chaining) are not yet implemented — see PLAN-draft11.md.
+
+**Cross-repo**: nothing released. The person-server and demo move to -11 against a library SNAPSHOT
+before any release; strict Ed25519 flips when the Python reference reaches -11.
+
 ## Final review (2026-07-30)
 
 A security-focused review (java-reviewer agent) of the finished port found 4 issues, all fixed

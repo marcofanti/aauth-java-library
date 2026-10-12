@@ -182,7 +182,12 @@ public final class TokenExchange {
         try {
             Map<String, Object> metadata =
                     Metadata.fetchPersonServer(psBase, new DefaultHttpClient(exchange.httpClient()));
-            Object discovered = metadata.get("token_endpoint");
+            // Draft-11 renamed the PS endpoint to auth_token_endpoint; fall back to the
+            // legacy token_endpoint so pre-draft-11 person servers still resolve.
+            Object discovered = metadata.get("auth_token_endpoint");
+            if (discovered == null || discovered.toString().isEmpty()) {
+                discovered = metadata.get("token_endpoint");
+            }
             if (discovered != null && !discovered.toString().isEmpty()) {
                 tokenEndpoint = discovered.toString();
             }

@@ -61,12 +61,17 @@ class MetadataTest {
     @Test
     void buildsPersonServerMetadata() {
         Map<String, Object> metadata = Metadata.personServer(
-                        "https://ps.uma.lab", "https://ps.uma.lab/token", "https://ps.uma.lab/jwks.json")
+                        "https://ps.uma.lab",
+                        "https://ps.uma.lab/person-token",
+                        "https://ps.uma.lab/auth-token",
+                        "https://ps.uma.lab/jwks.json")
                 .with("scopes_supported", List.of("email", "payment"))
                 .build();
 
         assertThat(metadata)
                 .containsEntry("issuer", "https://ps.uma.lab")
+                .containsEntry("person_token_endpoint", "https://ps.uma.lab/person-token")
+                .containsEntry("auth_token_endpoint", "https://ps.uma.lab/auth-token")
                 .containsEntry("scopes_supported", List.of("email", "payment"));
     }
 

@@ -4,7 +4,6 @@ import io.github.marcofanti.aauth.ChallengeException;
 import io.github.marcofanti.aauth.headers.AAuthHeaders;
 import io.github.marcofanti.aauth.headers.AcceptSignatureHeader;
 import java.security.PrivateKey;
-import java.security.PublicKey;
 import java.util.List;
 import org.jspecify.annotations.Nullable;
 
@@ -12,15 +11,15 @@ import org.jspecify.annotations.Nullable;
  * Builds AAuth challenges for the resource role.
  *
  * <p>Returns {@link Challenge} (header name + value) so callers know which response header to
- * set: pseudonym/identity levels use {@code Accept-Signature}, the auth-token level uses
- * {@code AAuth-Requirement} with an embedded resource token.
+ * set: pseudonym/identity levels use {@code Accept-Signature}; the person-token and auth-token
+ * levels use {@code AAuth-Requirement} (the auth-token level embeds a resource token).
  */
 public final class ChallengeBuilder {
 
     private final ResourceTokenIssuer tokenIssuer;
 
-    public ChallengeBuilder(String resourceId, PrivateKey resourcePrivateKey, String resourceKid, String authServer) {
-        this.tokenIssuer = new ResourceTokenIssuer(resourceId, resourcePrivateKey, resourceKid, authServer);
+    public ChallengeBuilder(String resourceId, PrivateKey resourcePrivateKey, String resourceKid) {
+        this.tokenIssuer = new ResourceTokenIssuer(resourceId, resourcePrivateKey, resourceKid);
     }
 
     /** A challenge as (header name, header value). */
@@ -30,51 +29,57 @@ public final class ChallengeBuilder {
      * Parameters for {@link #buildChallenge(Spec)}.
      *
      * @param requireIdentity require verified agent identity
+     * @param requirePersonToken require a person token (draft-11 §6.4)
      * @param requireAuthToken require an authorization token (embeds a resource token)
-     * @param agentId agent identifier — required for auth-token challenges
-     * @param agentPublicKey agent's public key — required for auth-token challenges
-     * @param scope required scope — required for auth-token challenges
+     * @param grant resource-token issuance context — required for auth-token challenges
      * @param components covered components for {@code Accept-Signature}, or {@code null}
      * @param algs acceptable algorithms for {@code Accept-Signature}, or {@code null}
      */
     public record Spec(
             boolean requireIdentity,
+            boolean requirePersonToken,
             boolean requireAuthToken,
-            @Nullable String agentId,
-            @Nullable PublicKey agentPublicKey,
-            @Nullable String scope,
+            ResourceTokenIssuer.@Nullable Grant grant,
             @Nullable List<String> components,
             @Nullable List<String> algs) {
 
         /** A pseudonym-level challenge (signature required, no identity). */
         public static Spec pseudonym() {
-            return new Spec(false, false, null, null, null, null, null);
+            return new Spec(false, false, false, null, null, null);
         }
 
         /** An identity-level challenge. */
         public static Spec identity() {
-            return new Spec(true, false, null, null, null, null, null);
+            return new Spec(true, false, false, null, null, null);
         }
 
-        /** An auth-token-level challenge embedding a resource token for the given agent. */
-        public static Spec authToken(String agentId, PublicKey agentPublicKey, String scope) {
-            return new Spec(false, true, agentId, agentPublicKey, scope, null, null);
+        /** A person-token-level challenge (draft-11 §6.4). */
+        public static Spec personToken() {
+            return new Spec(false, true, false, null, null, null);
+        }
+
+        /** An auth-token-level challenge embedding a resource token built from {@code grant}. */
+        public static Spec authToken(ResourceTokenIssuer.Grant grant) {
+            return new Spec(false, false, true, grant, null, null);
         }
     }
 
     /**
      * Builds the AAuth challenge for a 401 response.
      *
-     * @throws ChallengeException if an auth-token challenge lacks agent details
+     * @throws ChallengeException if an auth-token challenge lacks its grant
      */
     public Challenge buildChallenge(Spec spec) {
+        if (spec.requirePersonToken()) {
+            return new Challenge(AAuthHeaders.HEADER_AAUTH_REQUIREMENT, AAuthHeaders.buildPersonTokenRequirement());
+        }
         if (spec.requireAuthToken()) {
-            if (spec.agentId() == null || spec.agentPublicKey() == null || spec.scope() == null) {
+            ResourceTokenIssuer.Grant grant = spec.grant();
+            if (grant == null) {
                 throw new ChallengeException(
-                        "agentId, agentPublicKey, and scope required for auth-token challenge",
-                        AAuthHeaders.REQUIRE_AUTH_TOKEN);
+                        "grant required for auth-token challenge", AAuthHeaders.REQUIRE_AUTH_TOKEN);
             }
-            String resourceToken = tokenIssuer.issueToken(spec.agentId(), spec.agentPublicKey(), spec.scope(), null);
+            String resourceToken = tokenIssuer.issueToken(grant);
             return new Challenge(
                     AAuthHeaders.HEADER_AAUTH_REQUIREMENT, AAuthHeaders.buildAuthTokenRequirement(resourceToken));
         }

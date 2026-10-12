@@ -10,7 +10,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
-/** Auth token ({@code aa-auth+jwt}) creation and verification per AAuth spec §9.1. */
+/** Auth token ({@code aa-auth+jwt}) creation and verification per AAuth draft-11 §9.1. */
 public final class AuthTokens {
 
     public static final String TYPE = "aa-auth+jwt";
@@ -20,71 +20,70 @@ public final class AuthTokens {
     /**
      * Parameters for {@link #create(Spec)}.
      *
+     * <p>Draft-11 removed the {@code agent} and {@code act} claims; the person is identified by
+     * {@code (iss, sub)} and {@code sub} is REQUIRED. {@code ps} names the person's person server.
+     *
      * @param iss auth server identifier (HTTPS URL)
-     * @param aud resource identifier, or agent identifier for self-access
-     * @param agent agent identifier ({@code aauth:local@domain}) — required
+     * @param aud resource identifier
+     * @param sub person identifier — REQUIRED
+     * @param ps person server identifier
      * @param cnfJwk agent's public signing key (JWK) — required
      * @param privateKey auth server's Ed25519 signing key
      * @param kid key ID for the signing key
-     * @param act actor claim per RFC 8693 §4.1 — required (e.g. {@code {"sub": agentId}})
-     * @param scope authorized scopes (at least one of scope or sub must be present)
-     * @param sub user identifier (at least one of scope or sub must be present)
+     * @param scope optional authorized scopes
      * @param exp expiration (Unix seconds); {@code null} defaults to one hour from now
-     * @param mission optional mission object when issued in mission context
+     * @param missionS256 optional mission binding when issued in mission context
      * @param dwk metadata document for key discovery; defaults to {@code aauth-access.json}
+     * @param account optional account identifier
      */
     public record Spec(
             String iss,
             String aud,
-            String agent,
+            String sub,
+            String ps,
             Map<String, Object> cnfJwk,
             PrivateKey privateKey,
             String kid,
-            Map<String, Object> act,
             @Nullable String scope,
-            @Nullable String sub,
             @Nullable Long exp,
-            @Nullable Map<String, Object> mission,
+            @Nullable String missionS256,
             String dwk,
             @Nullable String account) {
 
         public Spec {
-            if (agent == null || agent.isEmpty()) {
-                throw new TokenException("'agent' claim is required in auth token", TYPE);
+            if (sub == null || sub.isEmpty()) {
+                throw new TokenException("'sub' claim is required in auth token", TYPE);
             }
-            if ((sub == null || sub.isEmpty()) && (scope == null || scope.isEmpty())) {
-                throw new TokenException("At least one of 'sub' or 'scope' must be present in auth token", TYPE);
-            }
-            if (iss == null || aud == null || cnfJwk == null || privateKey == null || kid == null || act == null) {
-                throw new IllegalArgumentException("iss, aud, cnfJwk, privateKey, kid and act are required");
+            if (iss == null || aud == null || ps == null || cnfJwk == null || privateKey == null || kid == null) {
+                throw new IllegalArgumentException("iss, aud, ps, cnfJwk, privateKey and kid are required");
             }
             dwk = dwk == null ? "aauth-access.json" : dwk;
         }
 
-        public static Builder builder(String iss, String aud, String agent) {
-            return new Builder(iss, aud, agent);
+        public static Builder builder(String iss, String aud, String sub, String ps) {
+            return new Builder(iss, aud, sub, ps);
         }
 
         /** Builder for {@link Spec}. */
         public static final class Builder {
             private final String iss;
             private final String aud;
-            private final String agent;
+            private final String sub;
+            private final String ps;
             private @Nullable Map<String, Object> cnfJwk;
             private @Nullable PrivateKey privateKey;
             private @Nullable String kid;
-            private @Nullable Map<String, Object> act;
             private @Nullable String scope;
-            private @Nullable String sub;
             private @Nullable Long exp;
-            private @Nullable Map<String, Object> mission;
+            private @Nullable String missionS256;
             private @Nullable String dwk;
             private @Nullable String account;
 
-            private Builder(String iss, String aud, String agent) {
+            private Builder(String iss, String aud, String sub, String ps) {
                 this.iss = iss;
                 this.aud = aud;
-                this.agent = agent;
+                this.sub = sub;
+                this.ps = ps;
             }
 
             public Builder cnfJwk(Map<String, Object> cnfJwk) {
@@ -98,18 +97,8 @@ public final class AuthTokens {
                 return this;
             }
 
-            public Builder act(Map<String, Object> act) {
-                this.act = act;
-                return this;
-            }
-
             public Builder scope(String scope) {
                 this.scope = scope;
-                return this;
-            }
-
-            public Builder sub(String sub) {
-                this.sub = sub;
                 return this;
             }
 
@@ -118,8 +107,8 @@ public final class AuthTokens {
                 return this;
             }
 
-            public Builder mission(Map<String, Object> mission) {
-                this.mission = mission;
+            public Builder missionS256(String missionS256) {
+                this.missionS256 = missionS256;
                 return this;
             }
 
@@ -134,21 +123,20 @@ public final class AuthTokens {
             }
 
             public Spec build() {
-                if (cnfJwk == null || privateKey == null || kid == null || act == null) {
-                    throw new IllegalArgumentException("iss, aud, cnfJwk, privateKey, kid and act are required");
+                if (cnfJwk == null || privateKey == null || kid == null) {
+                    throw new IllegalArgumentException("cnfJwk, privateKey and kid are required");
                 }
                 return new Spec(
                         iss,
                         aud,
-                        agent,
+                        sub,
+                        ps,
                         cnfJwk,
                         privateKey,
                         kid,
-                        act,
                         scope,
-                        sub,
                         exp,
-                        mission,
+                        missionS256,
                         dwk == null ? "aauth-access.json" : dwk,
                         account);
             }
@@ -158,7 +146,8 @@ public final class AuthTokens {
     /** Creates a signed auth token ({@code aa-auth+jwt}). */
     public static String create(Spec spec) {
         long now = TokenSupport.nowEpochSeconds();
-        long exp = spec.exp() != null ? spec.exp() : now + 3600;
+        Long requestedExp = spec.exp();
+        long exp = requestedExp != null ? requestedExp : now + 3600;
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", TYPE);
@@ -168,21 +157,18 @@ public final class AuthTokens {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", spec.iss());
         payload.put("aud", spec.aud());
+        payload.put("sub", spec.sub());
+        payload.put("ps", spec.ps());
         payload.put("dwk", spec.dwk());
         payload.put("jti", UUID.randomUUID().toString());
-        payload.put("agent", spec.agent());
         payload.put("cnf", Map.of("jwk", spec.cnfJwk()));
-        payload.put("act", spec.act());
         payload.put("iat", now);
         payload.put("exp", exp);
-        if (spec.sub() != null) {
-            payload.put("sub", spec.sub());
-        }
         if (spec.scope() != null) {
             payload.put("scope", spec.scope());
         }
-        if (spec.mission() != null) {
-            payload.put("mission", spec.mission());
+        if (spec.missionS256() != null) {
+            payload.put("mission_s256", spec.missionS256());
         }
         if (spec.account() != null) {
             payload.put("account", spec.account());
@@ -205,16 +191,15 @@ public final class AuthTokens {
             @Nullable String expectedTyp,
             @Nullable String expectedIss,
             @Nullable String expectedAud,
-            @Nullable String expectedAgent,
             @Nullable Map<String, Object> requestSigningJwk) {
 
         public static VerifyOptions forType(@Nullable String expectedTyp) {
-            return new VerifyOptions(expectedTyp, null, null, null, null);
+            return new VerifyOptions(expectedTyp, null, null, null);
         }
     }
 
     /**
-     * Verifies a JWT token's signature and claims per spec §Auth Token Verification.
+     * Verifies a JWT token's signature and claims per draft-11 §9.4.3.
      *
      * @param token the JWT
      * @param jwksFetcher resolves the issuer's JWKS from its identifier ({@code iss})
@@ -238,14 +223,10 @@ public final class AuthTokens {
             }
         }
 
-        // Step 3: exp and iat (60s clock skew allowance for iat).
+        // Step 3: exp (no clock-skew tolerance in draft-11).
         Long exp = jwt.numericClaim("exp");
         if (exp != null && now >= exp) {
             throw new TokenException("Token has expired", tokenType);
-        }
-        Long iat = jwt.numericClaim("iat");
-        if (iat != null && iat > now + 60) {
-            throw new TokenException("Token iat is in the future", tokenType);
         }
 
         // Step 4: iss.
@@ -270,15 +251,6 @@ public final class AuthTokens {
             throw new TokenException("Token missing required 'jti' claim", tokenType);
         }
 
-        // Step 6: agent matches the request signing context.
-        if (options.expectedAgent() != null) {
-            String agent = jwt.claim("agent");
-            if (!options.expectedAgent().equals(agent)) {
-                throw new TokenException(
-                        "Invalid agent: expected " + options.expectedAgent() + ", got " + agent, tokenType);
-            }
-        }
-
         // Step 7: cnf.jwk matches the key that signed the HTTP request.
         if (options.requestSigningJwk() != null) {
             Object cnf = jwt.payload().get("cnf");
@@ -296,22 +268,10 @@ public final class AuthTokens {
             }
         }
 
-        // Step 8: act claim (required for auth tokens).
-        if (TYPE.equals(options.expectedTyp())) {
-            Object act = jwt.payload().get("act");
-            if (!(act instanceof Map<?, ?> actMap)) {
-                throw new TokenException("Auth token missing required 'act' claim", TYPE);
-            }
-            if (options.expectedAgent() != null && !options.expectedAgent().equals(actMap.get("sub"))) {
-                throw new TokenException(
-                        "act.sub does not match agent: expected " + options.expectedAgent() + ", got "
-                                + actMap.get("sub"),
-                        TYPE);
-            }
-            // Step 9: at least one of sub or scope.
-            if (jwt.claim("sub") == null && jwt.claim("scope") == null) {
-                throw new TokenException("Auth token must contain at least one of 'sub' or 'scope'", TYPE);
-            }
+        // draft-11 §9.4.3: auth tokens require 'sub'; the person is identified by (iss, sub).
+        // The 'agent', 'act' and "at least one of sub or scope" checks are gone.
+        if (TYPE.equals(options.expectedTyp()) && jwt.claim("sub") == null) {
+            throw new TokenException("Auth token missing required 'sub' claim", TYPE);
         }
 
         // Step 2 (last, matching the reference implementation): JWKS discovery + signature.

@@ -10,7 +10,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
-/** Resource token ({@code aa-resource+jwt}) creation and verification per AAuth spec §8.1. */
+/** Resource token ({@code aa-resource+jwt}) creation and verification per AAuth draft-11 §6.7. */
 public final class ResourceTokens {
 
     public static final String TYPE = "aa-resource+jwt";
@@ -21,39 +21,54 @@ public final class ResourceTokens {
     /**
      * Parameters for {@link #create(Spec)}.
      *
+     * <p>Draft-11 removed {@code agent} and the {@code mission} object; the person is now named by
+     * {@code (ps, sub)} and the mission rides as {@code mission_s256}. {@code presentedJti} is the
+     * {@code jti} of the token (person or auth) the agent presented to obtain this resource token.
+     *
      * @param iss resource identifier (HTTPS URL)
-     * @param aud auth server identifier (HTTPS URL)
-     * @param agent agent identifier
+     * @param aud audience: the PS that issued the person token (three-party) or the AS (four-party)
      * @param agentJkt JWK thumbprint of the agent's signing key
      * @param scope space-separated scope values
+     * @param ps the person server — the {@code iss} of the person token, or the auth token's
+     *     {@code ps}
+     * @param sub the person identifier copied from the presented token
+     * @param presentedJti {@code jti} of the token the agent presented
      * @param privateKey resource's Ed25519 signing key
      * @param kid key ID for the signing key
      * @param exp expiration (Unix seconds); {@code null} defaults to ten minutes from now
-     * @param mission optional {@code {"approver": url, "s256": hash}} when mission-aware
-     * @param account optional account identifier at the resource, echoing the authorization
-     *     request's account parameter (draft-10 §12.3)
+     * @param missionS256 optional mission binding; REQUIRED when the presented token carried one
+     * @param tenant optional organization context copied from the presented token
+     * @param loginHint optional login hint for the authorization server
+     * @param account optional account identifier at the resource (draft-11 §12.3)
      */
     public record Spec(
             String iss,
             String aud,
-            String agent,
             String agentJkt,
             String scope,
+            String ps,
+            String sub,
+            String presentedJti,
             PrivateKey privateKey,
             String kid,
             @Nullable Long exp,
-            @Nullable Map<String, Object> mission,
+            @Nullable String missionS256,
+            @Nullable String tenant,
+            @Nullable String loginHint,
             @Nullable String account) {
 
         public Spec {
             if (iss == null
                     || aud == null
-                    || agent == null
                     || agentJkt == null
                     || scope == null
+                    || ps == null
+                    || sub == null
+                    || presentedJti == null
                     || privateKey == null
                     || kid == null) {
-                throw new IllegalArgumentException("iss, aud, agent, agentJkt, scope, privateKey and kid are required");
+                throw new IllegalArgumentException(
+                        "iss, aud, agentJkt, scope, ps, sub, presentedJti, privateKey and kid are required");
             }
         }
     }
@@ -61,7 +76,8 @@ public final class ResourceTokens {
     /** Creates a signed resource token ({@code aa-resource+jwt}). */
     public static String create(Spec spec) {
         long now = TokenSupport.nowEpochSeconds();
-        long exp = spec.exp() != null ? spec.exp() : now + 600;
+        Long requestedExp = spec.exp();
+        long exp = requestedExp != null ? requestedExp : now + 600;
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", TYPE);
@@ -73,13 +89,21 @@ public final class ResourceTokens {
         payload.put("aud", spec.aud());
         payload.put("dwk", DWK);
         payload.put("jti", UUID.randomUUID().toString());
-        payload.put("agent", spec.agent());
+        payload.put("ps", spec.ps());
+        payload.put("sub", spec.sub());
         payload.put("agent_jkt", spec.agentJkt());
+        payload.put("presented_jti", spec.presentedJti());
         payload.put("scope", spec.scope());
         payload.put("iat", now);
         payload.put("exp", exp);
-        if (spec.mission() != null) {
-            payload.put("mission", spec.mission());
+        if (spec.missionS256() != null) {
+            payload.put("mission_s256", spec.missionS256());
+        }
+        if (spec.tenant() != null) {
+            payload.put("tenant", spec.tenant());
+        }
+        if (spec.loginHint() != null) {
+            payload.put("login_hint", spec.loginHint());
         }
         if (spec.account() != null) {
             payload.put("account", spec.account());
@@ -89,12 +113,11 @@ public final class ResourceTokens {
     }
 
     /**
-     * Verifies a resource token per spec §Resource Token Verification.
+     * Verifies a resource token per draft-11 §6.7.3 and §9.4.
      *
      * @param token the resource token
      * @param jwksFetcher resolves the resource's JWKS from its identifier ({@code iss})
      * @param expectedAud optional expected audience (PS or AS identifier)
-     * @param expectedAgent optional expected agent identifier
      * @param expectedAgentJkt optional expected JWK thumbprint of the agent's signing key
      * @return the verified payload claims
      * @throws TokenException if the token is invalid
@@ -103,7 +126,6 @@ public final class ResourceTokens {
             String token,
             Function<String, Map<String, Object>> jwksFetcher,
             @Nullable String expectedAud,
-            @Nullable String expectedAgent,
             @Nullable String expectedAgentJkt) {
         Jwts.Decoded jwt = TokenSupport.parseOrThrow(token, TYPE);
         long now = TokenSupport.nowEpochSeconds();
@@ -125,23 +147,16 @@ public final class ResourceTokens {
         if (now >= exp) {
             throw new TokenException("Resource token has expired", TYPE);
         }
-        Long iat = jwt.numericClaim("iat");
-        if (iat != null && iat > now + 60) {
-            throw new TokenException("Resource token iat is in the future", TYPE);
-        }
 
         if (expectedAud != null && !expectedAud.equals(jwt.claim("aud"))) {
             throw new TokenException("Invalid audience: expected " + expectedAud + ", got " + jwt.claim("aud"), TYPE);
-        }
-        if (expectedAgent != null && !expectedAgent.equals(jwt.claim("agent"))) {
-            throw new TokenException("Invalid agent: expected " + expectedAgent + ", got " + jwt.claim("agent"), TYPE);
         }
         if (expectedAgentJkt != null && !expectedAgentJkt.equals(jwt.claim("agent_jkt"))) {
             throw new TokenException(
                     "agent_jkt mismatch: expected " + expectedAgentJkt + ", got " + jwt.claim("agent_jkt"), TYPE);
         }
 
-        for (String claim : List.of("jti", "iss", "aud", "agent", "agent_jkt", "scope")) {
+        for (String claim : List.of("jti", "iss", "aud", "ps", "sub", "agent_jkt", "presented_jti", "scope")) {
             if (!jwt.payload().containsKey(claim)) {
                 throw new TokenException("Resource token missing required '" + claim + "' claim", TYPE);
             }

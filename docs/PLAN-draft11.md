@@ -1,0 +1,132 @@
+# AAuth draft-11 Migration Plan
+
+Target: `draft-hardt-oauth-aauth-protocol-11` (2026-09-25) + `draft-hardt-httpbis-signature-key-09`
+(2026-09-13). The library currently implements **-10 / sigkey-08**.
+
+Authoritative upstream migration guide: <https://github.com/dickhardt/AAuth/tree/main/upgrade-10-to-11>
+(role-by-role, with tracked checklist IDs). This plan maps the **agent** (`AG-*`/`AP-*`) and
+**resource** (`RS-*`) checklist items — the only two roles this library implements — to concrete
+library changes. PS and AS roles are out of scope (person-server territory).
+
+## Upstream state (gate)
+
+The Python reference library (`../aauth-python-library`, 0.3.5) is **still on draft-10** — its latest
+commit only just added the fully-specified `Ed25519` alg; no `person_token`, `presented_token`,
+`mission_s256`, `auth_token_endpoint`, or `session-token` anywhere. So:
+
+- **No Java↔Python interop test is possible for -11.** The existing interop tests stay pinned to -10
+  semantics and continue to assert the -10 wire format; a new `@Disabled`/documented placeholder
+  tracks the -11 interop that auto-heals once Python updates.
+- Strategy, same as the -10 jump: **compliant emission, tolerant verification**. Emit the -11 wire
+  format; keep accepting -10 shapes where a verifier can, so the ecosystem (person-server, demo,
+  Python) can migrate independently.
+
+## Headline changes (what -11 does)
+
+1. **Person token (`aa-person+jwt`), new.** PS issues it per resource; the agent presents it *instead
+   of its agent token* at the resource authorization endpoint. The resource verifies it before
+   issuing a resource token. New `requirement=person-token` 401 challenge.
+2. **`presented_token` / `presented_jti`.** The agent sends the token it presented alongside the
+   resource token; the resource token carries `presented_jti`; PS/AS cross-check the pair.
+3. **`agent` and `act` removed** from resource tokens *and* auth tokens. The person is identified by
+   `(iss, sub)`. Resource token gains `ps`, `sub`, `presented_jti`.
+4. **Missions: `mission_s256`** replaces the `AAuth-Mission` header and the `{approver, s256}`
+   object; the mission now rides inside the person token.
+5. **Renames:** `token_endpoint` → `auth_token_endpoint`; `access_mode` value `aauth-access-token`
+   → `session-token`. Metadata gains `person_token_endpoint`.
+6. **Revocation reworked:** request body `{jti, exp}` signed under `jwks_uri`; cascade; no 404; new
+   `revoked_jwt` / `clock_skew` signature errors.
+7. **Ed25519 MUST for every party** (unblocks the staged strict-alg flip); agent `local` part may
+   contain `A-Z` (exact, case-sensitive compare).
+8. **Third-Party Login (`login_endpoint`) removed entirely.**
+9. **JWT checks tightened:** `exp` no skew tolerance; `exp − iat ≤ 1h` for person/auth tokens; `iat`
+   no longer a validity check.
+10. **Call chaining:** a resource calling downstream is its own agent provider, routes through the
+    upstream token's PS.
+
+## Phased implementation
+
+Each phase lands on `draft11` behind `mvn verify` (tests + JaCoCo 80% + Spotless). Nothing merges to
+`main` until the person-server and demo are ready to move together (cross-repo sync lesson).
+
+### Phase A — Foundation: PersonTokens + token-claim changes + renames
+*(this increment)*
+
+- [ ] **New `tokens/PersonTokens.java`** — `aa-person+jwt`, `dwk = aauth-person.json`. `create(Spec)`
+  with claims `iss, sub, aud, dwk, jti, iat, exp, cnf.jwk`, optional `mission_s256`, `tenant`,
+  `account`, `scope`, `capabilities`. `verify(...)` per RS-10/§7.1.4: `typ`, `dwk`, `aud` = resource,
+  `cnf.jwk` present & structurally complete, `exp` in future (no skew), `exp − iat ≤ 3600`, identity
+  `(iss, sub)`. (AG-10..12, RS-10..13)
+- [ ] **`ResourceTokens.Spec`** — drop `agent`, drop `mission` object; add REQUIRED `ps`, `sub`,
+  `presentedJti`; add OPTIONAL `missionS256`, `tenant`, `loginHint`. Keep `iss, aud, dwk, jti, iat,
+  exp, agentJkt, scope, account`. Emit accordingly. `verify` drops the `agent` check, requires the
+  new claims. (RS-30..34, AG-22)
+- [ ] **`AuthTokens.Spec`** — drop `agent`, drop `act`; `sub` becomes REQUIRED; mission becomes
+  `missionS256`. `verifyToken` drops `agent`/`act`/"sub-or-scope" checks, requires `sub`, identifies
+  by `(iss, sub)`, adds `ps`. (RS-40..42, AG-23)
+- [ ] **Metadata** — add `person_token_endpoint`; rename auth-server `token_endpoint` →
+  `auth_token_endpoint` (keep reading the old name as a tolerant fallback); drop `login_endpoint`
+  from the documented optional fields; add `session-token` to `access_mode` values. (AG-01/02,
+  RS-01/02, AP-04)
+- [ ] **`TokenSupport.verifySignatureViaIssuer`** — unchanged interface; still Ed25519 + legacy
+  EdDSA tolerant (strict flip is Phase D).
+
+### Phase B — Resource role: person-token challenge + verifier rewrite
+
+- [ ] **`ChallengeBuilder`** — add a `personToken()` spec emitting `AAuth-Requirement:
+  requirement=person-token` (no params). (RS-11, RS-20)
+- [ ] **`RequestVerifier`** — verify a person token or auth token before success; with neither on the
+  authorization path, surface `requirement=person-token`. `Result` drops `act`; mission comes from
+  the verified person token's `mission_s256`, not the header. Stop reading `AAuth-Mission` and the
+  `aauth-mission` covered component. Keep the new `sub`/`ps`. (RS-10, RS-20, RS-30, RS-33, RS-40)
+- [ ] **`ResourceTokenIssuer`** — set `aud` from the person token's `iss` (three-party) or the AS
+  (four-party), **not** the agent token's `ps`; copy `sub`, `presented_jti`, `mission_s256`,
+  `tenant`. (RS-31, RS-32)
+- [ ] **Retire `MissionBinding` + `AAuth-Mission` enforcement** once the mission source moves into
+  the person token. Flag the files for deletion (replace, don't deprecate). (RS-33, AG-30)
+
+### Phase C — Agent role: person-token flow + presented_token + new responses
+
+- [ ] Agent requests a person token from `person_token_endpoint`; presents it at the resource;
+  caches per resource (+ per mission). (AG-10..12, AG-20)
+- [ ] Always send `presented_token` to `auth_token_endpoint` with the resource token. (AG-21, AG-25)
+- [ ] New responses: `requirement=person-token`, `requirement=auth-token` as 202 + polling,
+  `revoked_jwt`, `clock_skew`, polling `revoked`. (AG-26, AG-60..62)
+- [ ] Mission: stop sending `AAuth-Mission`; use `mission_s256`; parse the new approval shape.
+  (AG-30..36)
+- [ ] Refresh inside a five-minute margin, top-down. (AG-70)
+
+### Phase D — Signatures, identifiers, revocation, strict Ed25519
+
+- [ ] Fold `strict-alg-draft10` in: Ed25519 MUST, reject legacy `EdDSA` on emit; verification flips
+  to strict once upstream emits Ed25519 (still gated — keep tolerant until then, but the spec now
+  backs strict). (AG-52, AP-05, RS-50)
+- [ ] `Identifiers` — allow `A-Z` in the agent `local` part; exact case-sensitive compare, no
+  folding. (AP-01, RS-52)
+- [ ] Revocation — `{jti, exp}` request signed under `jwks_uri`, cascade semantics, new error set
+  (`unsupported_iss`, `rate_limited`), no 404. New `revoked_jwt`/`clock_skew` `Signature-Error`
+  codes. (AG-61, RS-60/61)
+- [ ] Tighten JWT checks: `exp` no skew; `exp − iat ≤ 1h` for person/auth tokens; `iat` not a
+  validity check. (RS-51)
+- [ ] Cover `content-digest` + `content-type` on every PS/AS request body. (AG-50)
+
+### Phase E — Call chaining (resource → downstream), optional headers
+
+- [ ] Resource-as-its-own-AP downstream flow (RS-70..75) — lower priority; the library exposes the
+  pieces but the demo drives it.
+- [ ] `latest`-draft additions sighted on GitHub `main` (post -11): `AAuth-Access` /
+  `AAuth-Capabilities` headers, five named access modes. Track separately once -11 is published-draft
+  stable.
+
+## Cross-repo sequencing
+
+1. Library `draft11` branch (this work) — emit -11, verify tolerantly. No release yet.
+2. Person-server + demo move to -11 against a library SNAPSHOT.
+3. Release the library once the three repos interoperate on -11.
+4. Flip strict Ed25519 / strict verification when the Python reference reaches -11.
+
+## Docs to update on completion
+
+- `docs/PROGRESS.md` — a draft-11 section mirroring the draft-10 one, with the decision log entry.
+- `CLAUDE.md` — bump the "mirrors aauth-python-library" note if the Java lib leads on -11.
+- `README.md` / `docs/DEMO.md` — the integration contract version strings.

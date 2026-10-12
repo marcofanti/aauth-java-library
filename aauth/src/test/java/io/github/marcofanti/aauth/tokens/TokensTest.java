@@ -20,7 +20,8 @@ class TokensTest {
     private static final String AGENT_SERVER = "https://portal.uma.lab";
     private static final String AUTH_SERVER = "https://alice-as.uma.lab";
     private static final String RESOURCE = "https://gateway.uma.lab";
-    private static final String AGENT_ID = "aauth:agent@portal.uma.lab";
+    private static final String PS = "https://ps.uma.lab";
+    private static final String PERSON_SUB = "person-sub-1";
 
     private final KeyPair issuerKeys = KeyPairs.generateEd25519();
     private final KeyPair delegateKeys = KeyPairs.generateEd25519();
@@ -33,7 +34,7 @@ class TokensTest {
     private String agentToken() {
         return AgentTokens.create(
                 AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
-                        .ps("https://ps.uma.lab")
+                        .ps(PS)
                         .build());
     }
 
@@ -45,7 +46,7 @@ class TokensTest {
                 .containsEntry("iss", AGENT_SERVER)
                 .containsEntry("sub", "delegate-1")
                 .containsEntry("dwk", "aauth-agent.json")
-                .containsEntry("ps", "https://ps.uma.lab")
+                .containsEntry("ps", PS)
                 .containsKeys("jti", "iat", "exp", "cnf");
     }
 
@@ -88,13 +89,89 @@ class TokensTest {
                 .hasMessageContaining("expired");
     }
 
+    // --- Person tokens (draft-11) ---
+
+    private String personToken(String aud) {
+        return PersonTokens.create(new PersonTokens.Spec(
+                PS,
+                PERSON_SUB,
+                aud,
+                delegateJwk,
+                issuerKeys.getPrivate(),
+                "key-1",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null));
+    }
+
+    @Test
+    void personTokenRoundTrips() {
+        Map<String, Object> claims = PersonTokens.verify(personToken(RESOURCE), issuerJwksFetcher, RESOURCE);
+
+        assertThat(claims)
+                .containsEntry("iss", PS)
+                .containsEntry("sub", PERSON_SUB)
+                .containsEntry("aud", RESOURCE)
+                .containsEntry("dwk", "aauth-person.json")
+                .containsKeys("jti", "iat", "exp", "cnf");
+    }
+
+    @Test
+    void personTokenRejectsWrongAudience() {
+        assertThatThrownBy(() -> PersonTokens.verify(personToken(RESOURCE), issuerJwksFetcher, "https://other.uma.lab"))
+                .isInstanceOf(TokenException.class)
+                .hasMessageContaining("audience");
+    }
+
+    @Test
+    void personTokenRejectsOverlongLifetime() {
+        String token = PersonTokens.create(new PersonTokens.Spec(
+                PS,
+                PERSON_SUB,
+                RESOURCE,
+                delegateJwk,
+                issuerKeys.getPrivate(),
+                "key-1",
+                Instant.now().getEpochSecond() + 7200,
+                null,
+                null,
+                null,
+                null,
+                null));
+
+        assertThatThrownBy(() -> PersonTokens.verify(token, issuerJwksFetcher, RESOURCE))
+                .isInstanceOf(TokenException.class)
+                .hasMessageContaining("lifetime");
+    }
+
+    @Test
+    void personTokenCarriesMissionS256() {
+        String token = PersonTokens.create(new PersonTokens.Spec(
+                PS,
+                PERSON_SUB,
+                RESOURCE,
+                delegateJwk,
+                issuerKeys.getPrivate(),
+                "key-1",
+                null,
+                "abc123",
+                null,
+                null,
+                null,
+                null));
+
+        assertThat(PersonTokens.verify(token, issuerJwksFetcher, RESOURCE)).containsEntry("mission_s256", "abc123");
+    }
+
     // --- Auth tokens ---
 
     private AuthTokens.Spec.Builder authTokenSpec() {
-        return AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE, AGENT_ID)
+        return AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE, PERSON_SUB, PS)
                 .cnfJwk(delegateJwk)
                 .signingKey(issuerKeys.getPrivate(), "key-1")
-                .act(Map.of("sub", AGENT_ID))
                 .scope("data.read");
     }
 
@@ -105,26 +182,42 @@ class TokensTest {
         Map<String, Object> claims = AuthTokens.verifyToken(
                 token,
                 issuerJwksFetcher,
-                new AuthTokens.VerifyOptions(AuthTokens.TYPE, AUTH_SERVER, RESOURCE, AGENT_ID, delegateJwk));
+                new AuthTokens.VerifyOptions(AuthTokens.TYPE, AUTH_SERVER, RESOURCE, delegateJwk));
 
         assertThat(claims)
-                .containsEntry("agent", AGENT_ID)
+                .containsEntry("sub", PERSON_SUB)
+                .containsEntry("ps", PS)
                 .containsEntry("scope", "data.read")
-                .containsEntry("dwk", "aauth-access.json");
+                .containsEntry("dwk", "aauth-access.json")
+                .doesNotContainKeys("agent", "act");
     }
 
     @Test
-    void authTokenRequiresAgentAndSubOrScope() {
-        assertThatThrownBy(() -> AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE, null)
+    void authTokenRequiresSub() {
+        assertThatThrownBy(() -> AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE, null, PS)
                         .cnfJwk(delegateJwk)
                         .signingKey(issuerKeys.getPrivate(), "key-1")
-                        .act(Map.of("sub", AGENT_ID))
                         .scope("x")
                         .build())
                 .isInstanceOf(TokenException.class)
-                .hasMessageContaining("agent");
+                .hasMessageContaining("sub");
+    }
 
-        assertThatThrownBy(() -> authTokenSpec().scope(null).build())
+    @Test
+    void authTokenVerificationRequiresSub() {
+        // A token without 'sub' (legacy shape) must fail -11 verification.
+        Map<String, Object> header =
+                new LinkedHashMap<>(Map.of("typ", AuthTokens.TYPE, "alg", "Ed25519", "kid", "key-1"));
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("iss", AUTH_SERVER);
+        payload.put("jti", "x");
+        payload.put("cnf", Map.of("jwk", delegateJwk));
+        payload.put("scope", "data.read");
+        payload.put("exp", Instant.now().getEpochSecond() + 300);
+        String noSub = Jwts.signEdDsa(header, payload, issuerKeys.getPrivate());
+
+        assertThatThrownBy(() -> AuthTokens.verifyToken(
+                        noSub, issuerJwksFetcher, AuthTokens.VerifyOptions.forType(AuthTokens.TYPE)))
                 .isInstanceOf(TokenException.class)
                 .hasMessageContaining("sub");
     }
@@ -136,44 +229,9 @@ class TokensTest {
                 Jwk.publicKeyToJwk(KeyPairs.generateEd25519().getPublic(), null);
 
         assertThatThrownBy(() -> AuthTokens.verifyToken(
-                        token,
-                        issuerJwksFetcher,
-                        new AuthTokens.VerifyOptions(AuthTokens.TYPE, null, null, null, otherJwk)))
+                        token, issuerJwksFetcher, new AuthTokens.VerifyOptions(AuthTokens.TYPE, null, null, otherJwk)))
                 .isInstanceOf(TokenException.class)
                 .hasMessageContaining("cnf.jwk");
-    }
-
-    @Test
-    void authTokenRejectsActSubMismatch() {
-        String token = AuthTokens.create(authTokenSpec()
-                .act(Map.of("sub", "aauth:other@keycloak.uma.lab"))
-                .build());
-
-        assertThatThrownBy(() -> AuthTokens.verifyToken(
-                        token,
-                        issuerJwksFetcher,
-                        new AuthTokens.VerifyOptions(AuthTokens.TYPE, null, null, AGENT_ID, null)))
-                .isInstanceOf(TokenException.class)
-                .hasMessageContaining("act.sub");
-    }
-
-    @Test
-    void authTokenRejectsFutureIat() {
-        Map<String, Object> header =
-                new LinkedHashMap<>(Map.of("typ", AuthTokens.TYPE, "alg", "EdDSA", "kid", "key-1"));
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("iss", AUTH_SERVER);
-        payload.put("jti", "x");
-        payload.put("agent", AGENT_ID);
-        payload.put("act", Map.of("sub", AGENT_ID));
-        payload.put("scope", "data.read");
-        payload.put("iat", Instant.now().getEpochSecond() + 600);
-        String token = Jwts.signEdDsa(header, payload, issuerKeys.getPrivate());
-
-        assertThatThrownBy(() -> AuthTokens.verifyToken(
-                        token, issuerJwksFetcher, AuthTokens.VerifyOptions.forType(AuthTokens.TYPE)))
-                .isInstanceOf(TokenException.class)
-                .hasMessageContaining("iat");
     }
 
     @Test
@@ -202,7 +260,7 @@ class TokensTest {
     void agentTokenValidatesPsAndParentAgentWhenPresent() {
         String valid = AgentTokens.create(
                 AgentTokens.Spec.builder(AGENT_SERVER, "delegate-1", delegateJwk, issuerKeys.getPrivate(), "key-1")
-                        .ps("https://ps.uma.lab")
+                        .ps(PS)
                         .parentAgent("aauth:parent@portal.uma.lab")
                         .build());
         assertThat(AgentTokens.verify(valid, issuerJwksFetcher, null))
@@ -244,16 +302,20 @@ class TokensTest {
 
         String resourceToken = ResourceTokens.create(new ResourceTokens.Spec(
                 RESOURCE,
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 "jkt",
-                "s",
+                "data.read",
+                PS,
+                PERSON_SUB,
+                "presented-1",
                 issuerKeys.getPrivate(),
                 "key-1",
                 null,
                 null,
+                null,
+                null,
                 "alice@gateway.uma.lab"));
-        assertThat(ResourceTokens.verify(resourceToken, issuerJwksFetcher, null, null, null))
+        assertThat(ResourceTokens.verify(resourceToken, issuerJwksFetcher, null, null))
                 .containsEntry("account", "alice@gateway.uma.lab");
     }
 
@@ -271,12 +333,16 @@ class TokensTest {
     private String resourceToken() {
         return ResourceTokens.create(new ResourceTokens.Spec(
                 RESOURCE,
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 Jwk.thumbprint(delegateJwk),
                 "data.read data.write",
+                PS,
+                PERSON_SUB,
+                "presented-1",
                 issuerKeys.getPrivate(),
                 "key-1",
+                null,
+                null,
                 null,
                 null,
                 null));
@@ -284,19 +350,22 @@ class TokensTest {
 
     @Test
     void resourceTokenRoundTrips() {
-        Map<String, Object> claims = ResourceTokens.verify(
-                resourceToken(), issuerJwksFetcher, AUTH_SERVER, AGENT_ID, Jwk.thumbprint(delegateJwk));
+        Map<String, Object> claims =
+                ResourceTokens.verify(resourceToken(), issuerJwksFetcher, PS, Jwk.thumbprint(delegateJwk));
 
         assertThat(claims)
                 .containsEntry("iss", RESOURCE)
                 .containsEntry("dwk", "aauth-resource.json")
-                .containsEntry("scope", "data.read data.write");
+                .containsEntry("ps", PS)
+                .containsEntry("sub", PERSON_SUB)
+                .containsEntry("presented_jti", "presented-1")
+                .containsEntry("scope", "data.read data.write")
+                .doesNotContainKey("agent");
     }
 
     @Test
     void resourceTokenRejectsAgentJktMismatch() {
-        assertThatThrownBy(
-                        () -> ResourceTokens.verify(resourceToken(), issuerJwksFetcher, null, null, "WRONG_THUMBPRINT"))
+        assertThatThrownBy(() -> ResourceTokens.verify(resourceToken(), issuerJwksFetcher, null, "WRONG_THUMBPRINT"))
                 .isInstanceOf(TokenException.class)
                 .hasMessageContaining("agent_jkt");
     }
@@ -305,36 +374,44 @@ class TokensTest {
     void resourceTokenRejectsExpired() {
         String token = ResourceTokens.create(new ResourceTokens.Spec(
                 RESOURCE,
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 "jkt",
                 "s",
+                PS,
+                PERSON_SUB,
+                "presented-1",
                 issuerKeys.getPrivate(),
                 "key-1",
                 Instant.now().getEpochSecond() - 5,
                 null,
+                null,
+                null,
                 null));
 
-        assertThatThrownBy(() -> ResourceTokens.verify(token, issuerJwksFetcher, null, null, null))
+        assertThatThrownBy(() -> ResourceTokens.verify(token, issuerJwksFetcher, null, null))
                 .isInstanceOf(TokenException.class)
                 .hasMessageContaining("expired");
     }
 
     @Test
-    void resourceTokenCarriesMission() {
+    void resourceTokenCarriesMissionS256() {
         String token = ResourceTokens.create(new ResourceTokens.Spec(
                 RESOURCE,
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 "jkt",
                 "s",
+                PS,
+                PERSON_SUB,
+                "presented-1",
                 issuerKeys.getPrivate(),
                 "key-1",
                 null,
-                Map.of("approver", "https://ps.uma.lab", "s256", "abc"),
+                "abc123",
+                null,
+                null,
                 null));
 
-        Map<String, Object> claims = ResourceTokens.verify(token, issuerJwksFetcher, null, null, null);
-        assertThat(((Map<?, ?>) claims.get("mission")).get("approver")).isEqualTo("https://ps.uma.lab");
+        Map<String, Object> claims = ResourceTokens.verify(token, issuerJwksFetcher, null, null);
+        assertThat(claims).containsEntry("mission_s256", "abc123");
     }
 }

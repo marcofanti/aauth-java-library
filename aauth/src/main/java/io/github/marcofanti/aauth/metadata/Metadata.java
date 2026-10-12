@@ -82,16 +82,19 @@ public final class Metadata {
     }
 
     /**
-     * Person server metadata per spec §PS Metadata, published at
-     * {@code /.well-known/aauth-person.json}. Optional fields: {@code mission_endpoint},
-     * {@code permission_endpoint}, {@code audit_endpoint}, {@code interaction_endpoint},
-     * {@code mission_control_endpoint}, {@code login_endpoint}, {@code revocation_endpoint},
+     * Person server metadata per draft-11 §11.2.2, published at
+     * {@code /.well-known/aauth-person.json}. Draft-11 renamed {@code token_endpoint} to
+     * {@code auth_token_endpoint} and added {@code person_token_endpoint}. Optional fields:
+     * {@code mission_endpoint}, {@code permission_endpoint}, {@code audit_endpoint},
+     * {@code interaction_endpoint}, {@code mission_control_endpoint}, {@code revocation_endpoint},
      * {@code scopes_supported}, {@code claims_supported}.
      */
-    public static Doc personServer(String personServer, String tokenEndpoint, String jwksUri) {
+    public static Doc personServer(
+            String personServer, String personTokenEndpoint, String authTokenEndpoint, String jwksUri) {
         Doc doc = new Doc();
         doc.with("issuer", requireValue(personServer, "issuer"));
-        doc.with("token_endpoint", requireValue(tokenEndpoint, "token_endpoint"));
+        doc.with("person_token_endpoint", requireValue(personTokenEndpoint, "person_token_endpoint"));
+        doc.with("auth_token_endpoint", requireValue(authTokenEndpoint, "auth_token_endpoint"));
         doc.with("jwks_uri", requireValue(jwksUri, "jwks_uri"));
         return doc;
     }

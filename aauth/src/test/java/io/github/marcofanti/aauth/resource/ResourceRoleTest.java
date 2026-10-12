@@ -21,7 +21,8 @@ class ResourceRoleTest {
 
     private static final String RESOURCE_ID = "https://gateway.uma.lab";
     private static final String AUTH_SERVER = "https://alice-as.uma.lab";
-    private static final String AGENT_ID = "aauth:agent@portal.uma.lab";
+    private static final String PS = "https://ps.uma.lab";
+    private static final String PERSON_SUB = "person-sub-1";
     private static final String TARGET = "https://gateway.uma.lab/api/data";
 
     private final KeyPair resourceKeys = KeyPairs.generateEd25519();
@@ -69,32 +70,34 @@ class ResourceRoleTest {
 
     @Test
     void fullAuthTokenFlowFromChallengeToVerifiedScopes() {
-        // 1. Resource challenges the agent with an embedded resource token.
-        ChallengeBuilder challengeBuilder =
-                new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", AUTH_SERVER);
-        ChallengeBuilder.Challenge challenge = challengeBuilder.buildChallenge(
-                ChallengeBuilder.Spec.authToken(AGENT_ID, agentKeys.getPublic(), "data.read"));
+        // 1. Resource challenges the agent with an embedded resource token (draft-11: built from
+        //    the context of the person token the agent presented at the authorization endpoint).
+        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
+        ResourceTokenIssuer.Grant grant = new ResourceTokenIssuer.Grant(
+                agentKeys.getPublic(), "data.read", PS, PS, PERSON_SUB, "person-jti-1", null, null, null);
+        ChallengeBuilder.Challenge challenge = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.authToken(grant));
 
         assertThat(challenge.headerName()).isEqualTo(AAuthHeaders.HEADER_AAUTH_REQUIREMENT);
         String resourceToken =
                 AAuthHeaders.parseAAuthHeader(challenge.headerValue()).resourceToken();
         assertThat(resourceToken).isNotNull();
 
-        // 2. The auth server verifies the resource token (agent key binding included).
+        // 2. The PS verifies the resource token (agent key binding included).
         Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
         Map<String, Object> resourceClaims = ResourceTokens.verify(
                 resourceToken,
                 iss -> Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-key-1"))),
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 Jwk.thumbprint(agentJwk));
-        assertThat(resourceClaims).containsEntry("scope", "data.read");
+        assertThat(resourceClaims)
+                .containsEntry("scope", "data.read")
+                .containsEntry("sub", PERSON_SUB)
+                .containsEntry("presented_jti", "person-jti-1");
 
         // 3. The auth server issues an auth token bound to the agent's key.
-        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, AGENT_ID)
+        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
                 .cnfJwk(agentJwk)
                 .signingKey(authServerKeys.getPrivate(), "as-key-1")
-                .act(Map.of("sub", AGENT_ID))
                 .scope("data.read")
                 .build());
 
@@ -104,12 +107,11 @@ class ResourceRoleTest {
         Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwt"));
 
         // 5. The resource verifies the signature and extracts the authorization context.
-        RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, true, true);
+        RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, false, true);
 
         assertThat(result.valid()).isTrue();
-        assertThat(result.agentId()).isEqualTo(AGENT_ID);
+        assertThat(result.userSub()).isEqualTo(PERSON_SUB);
         assertThat(result.scopes()).containsExactly("data.read");
-        assertThat(result.act()).containsEntry("sub", AGENT_ID);
     }
 
     @Test
@@ -117,10 +119,11 @@ class ResourceRoleTest {
         // Regression: a validly signed auth token with scope "" must not pass requireAuthToken.
         Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
         Map<String, Object> header =
-                new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "EdDSA", "kid", "as-key-1"));
+                new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "Ed25519", "kid", "as-key-1"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", AUTH_SERVER);
-        payload.put("agent", AGENT_ID);
+        payload.put("sub", PERSON_SUB);
+        payload.put("ps", PS);
         payload.put("cnf", Map.of("jwk", agentJwk));
         payload.put("scope", "  ");
         payload.put("exp", java.time.Instant.now().getEpochSecond() + 300);
@@ -141,10 +144,9 @@ class ResourceRoleTest {
     @Test
     void scopeSplittingCollapsesWhitespace() {
         Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
-        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, AGENT_ID)
+        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
                 .cnfJwk(agentJwk)
                 .signingKey(authServerKeys.getPrivate(), "as-key-1")
-                .act(Map.of("sub", AGENT_ID))
                 .scope("data.read  data.write")
                 .build());
         AgentRequestSigner signer =
@@ -327,8 +329,7 @@ class ResourceRoleTest {
 
     @Test
     void challengeBuilderEmitsAcceptSignatureLevels() {
-        ChallengeBuilder challengeBuilder =
-                new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", AUTH_SERVER);
+        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
 
         ChallengeBuilder.Challenge pseudonym = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.pseudonym());
         assertThat(pseudonym.headerName()).isEqualTo(AAuthHeaders.HEADER_ACCEPT_SIGNATURE);
@@ -339,29 +340,37 @@ class ResourceRoleTest {
     }
 
     @Test
-    void authTokenChallengeRequiresAgentDetails() {
-        ChallengeBuilder challengeBuilder =
-                new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", AUTH_SERVER);
+    void personTokenChallengeEmitsRequirement() {
+        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
+
+        ChallengeBuilder.Challenge challenge = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.personToken());
+
+        assertThat(challenge.headerName()).isEqualTo(AAuthHeaders.HEADER_AAUTH_REQUIREMENT);
+        assertThat(challenge.headerValue()).isEqualTo("requirement=person-token");
+    }
+
+    @Test
+    void authTokenChallengeRequiresGrant() {
+        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
 
         assertThatThrownBy(() -> challengeBuilder.buildChallenge(
-                        new ChallengeBuilder.Spec(false, true, null, null, null, null, null)))
+                        new ChallengeBuilder.Spec(false, false, true, null, null, null)))
                 .isInstanceOf(ChallengeException.class)
-                .hasMessageContaining("agentId");
+                .hasMessageContaining("grant");
     }
 
     @Test
     void issuerProducesVerifiableResourceTokens() {
-        ResourceTokenIssuer issuer =
-                new ResourceTokenIssuer(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", AUTH_SERVER);
+        ResourceTokenIssuer issuer = new ResourceTokenIssuer(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
 
-        String token = issuer.issueToken(AGENT_ID, agentKeys.getPublic(), "data.write", null);
+        String token = issuer.issueToken(new ResourceTokenIssuer.Grant(
+                agentKeys.getPublic(), "data.write", PS, PS, PERSON_SUB, "person-jti-1", null, null, null));
 
         Map<String, Object> claims = ResourceTokens.verify(
                 token,
                 iss -> Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-key-1"))),
-                AUTH_SERVER,
-                AGENT_ID,
+                PS,
                 null);
-        assertThat(claims).containsEntry("scope", "data.write");
+        assertThat(claims).containsEntry("scope", "data.write").containsEntry("sub", PERSON_SUB);
     }
 }
