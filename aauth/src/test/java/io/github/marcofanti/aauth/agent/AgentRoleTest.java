@@ -70,16 +70,41 @@ class AgentRoleTest {
 
         AAuthHeaders.ParsedChallenge authToken =
                 handler.parseChallenge("requirement=auth-token; resource-token=\"rt\"");
-        assertThat(handler.determineResponseScheme(authToken, false, true)).isEqualTo("jwt");
-        assertThatThrownBy(() -> handler.determineResponseScheme(authToken, true, false))
+        assertThat(handler.determineResponseScheme(authToken, held(false, false, true)))
+                .isEqualTo("jwt");
+        assertThatThrownBy(() -> handler.determineResponseScheme(authToken, held(true, true, false)))
                 .isInstanceOf(ChallengeException.class)
                 .hasMessageContaining("auth token");
 
         AAuthHeaders.ParsedChallenge identity = handler.parseChallenge("requirement=identity");
-        assertThat(handler.determineResponseScheme(identity, true, false)).isEqualTo("jwt");
-        assertThat(handler.determineResponseScheme(identity, false, false)).isEqualTo("jwks_uri");
+        assertThat(handler.determineResponseScheme(identity, held(true, false, false)))
+                .isEqualTo("jwt");
+        assertThat(handler.determineResponseScheme(identity, held(false, false, false)))
+                .isEqualTo("jwks_uri");
 
         AAuthHeaders.ParsedChallenge pseudonym = handler.parseChallenge("requirement=pseudonym");
-        assertThat(handler.determineResponseScheme(pseudonym, true, true)).isEqualTo("hwk");
+        assertThat(handler.determineResponseScheme(pseudonym, held(true, true, true)))
+                .isEqualTo("hwk");
+    }
+
+    @Test
+    void personTokenChallengePresentsPersonOrAuthToken() {
+        ChallengeHandler handler = new ChallengeHandler();
+        AAuthHeaders.ParsedChallenge personToken = handler.parseChallenge("requirement=person-token");
+
+        assertThat(personToken.requirement()).isEqualTo(AAuthHeaders.REQUIRE_PERSON_TOKEN);
+        assertThat(handler.determineResponseScheme(personToken, held(true, true, false)))
+                .isEqualTo("jwt");
+        // Once the agent holds an auth token for the resource, it presents that instead.
+        assertThat(handler.determineResponseScheme(personToken, held(true, false, true)))
+                .isEqualTo("jwt");
+        // An agent token alone cannot satisfy it — never fall back to a pseudonymous signature.
+        assertThatThrownBy(() -> handler.determineResponseScheme(personToken, held(true, false, false)))
+                .isInstanceOf(ChallengeException.class)
+                .hasMessageContaining("person_token_endpoint");
+    }
+
+    private static ChallengeHandler.HeldTokens held(boolean agentToken, boolean personToken, boolean authToken) {
+        return new ChallengeHandler.HeldTokens(agentToken, personToken, authToken);
     }
 }

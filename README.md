@@ -205,10 +205,10 @@ aauth/                               io.github.marcofanti.aauth
 ├── ErrorCodes, Identifiers, exceptions
 ├── http/                            AAuthRequest/AAuthResponse, DeferredResponses (202 + polling)
 ├── keys/                            CachingJwksFetcher, JwksCache, JsonHttpClient
-├── tokens/                          AgentTokens, AuthTokens, ResourceTokens
-├── headers/                         AAuthHeaders, AcceptSignatureHeader, SignatureErrorHeader
+├── tokens/                          AgentTokens, PersonTokens, AuthTokens, ResourceTokens
+├── headers/                         AAuthHeaders, AcceptSignatureHeader, SignatureErrorHeader, MissionBinding
 ├── metadata/                        Metadata (.well-known build + fetch)
-├── agent/                           AgentRequestSigner, ChallengeHandler, TokenExchange, Poller
+├── agent/                           AgentRequestSigner, ChallengeHandler, TokenExchange, Poller, PersonTokenCache
 └── resource/                        RequestVerifier, ChallengeBuilder, ResourceTokenIssuer
 ```
 

@@ -124,10 +124,27 @@ Java↔Python -11 interop is possible yet.
     helper (AG-32); the `approver`-based `matchesDocument`/`matchesClaim` are gone.
   - `ChallengeBuilder` person-token challenge (`requirement=person-token`) covered by tests.
 
-- **Deferred (Phase C/D/E)**: agent-side person-token flow (request from `person_token_endpoint`,
-  present at the resource, cache), `presented_token` on the token exchange, `requirement=auth-token`
-  as 202 + polling, strict Ed25519 emission, revocation `{jti, exp}`, call chaining. Not yet
-  implemented — see PLAN-draft11.md.
+- **Phase C done (agent role, core)**:
+  - `TokenExchange.requestPersonToken` (new) requests a person token from the PS
+    `person_token_endpoint` (discovered, fallback `{ps}/person-token`) with `resource`,
+    `mission_s256`, `capabilities`; handles 200 and 202 + polling. The exchange's HTTP/signing
+    helpers were folded into a shared `Caller` context and a shared `pollDeferred`.
+  - `TokenExchange.Exchange` gained `presentedToken`; the auth-token request sends
+    `presented_token` (AG-21) when supplied and omits it otherwise (pre-draft-11 servers).
+  - Every PS POST now covers `content-type` + `content-digest` (AG-50). **Deviation from the
+    Python reference**, which signs these requests without body coverage; verifiers check whatever
+    components are listed, so -10 person servers are unaffected.
+  - New `PersonTokenCache` (per resource + mission, five-minute refresh margin, `clear()` on key
+    rotation, static `needsRefresh`).
+  - `ChallengeHandler.determineResponseScheme` takes a `HeldTokens` record; `person-token` is met
+    with `jwt` and errors when the agent holds no person/auth token.
+  - `ErrorCodes` updated to the draft-11 vocabulary; `invalid_agent_token` and
+    `expired_agent_token` removed (draft-11 reports a bad agent token as a 401 `Signature-Error`).
+
+- **Deferred**: AG-26 end-to-end helper for `requirement=auth-token` as a 202 at the resource,
+  AG-25, mission approval parsing and mission-endpoint actions (AG-32..36), sub-agent flow (AG-40);
+  Phase D (strict Ed25519, uppercase agent `local`, revocation `{jti, exp}`, JWT lifetime checks)
+  and Phase E (call chaining). See PLAN-draft11.md.
 
 **Cross-repo**: nothing released. The person-server and demo move to -11 against a library SNAPSHOT
 before any release; strict Ed25519 flips when the Python reference reaches -11.

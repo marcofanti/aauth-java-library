@@ -84,16 +84,30 @@ Each phase lands on `draft11` behind `mvn verify` (tests + JaCoCo 80% + Spotless
 - [x] **Retired `MissionBinding` matching + `AAuth-Mission`** (replace, don't deprecate); kept the
   still-valid `MissionBinding.s256` hash + a `matches` helper. (RS-33, AG-30)
 
-### Phase C — Agent role: person-token flow + presented_token + new responses
+### Phase C — Agent role: person-token flow + presented_token + new responses — DONE (core)
 
-- [ ] Agent requests a person token from `person_token_endpoint`; presents it at the resource;
-  caches per resource (+ per mission). (AG-10..12, AG-20)
-- [ ] Always send `presented_token` to `auth_token_endpoint` with the resource token. (AG-21, AG-25)
-- [ ] New responses: `requirement=person-token`, `requirement=auth-token` as 202 + polling,
-  `revoked_jwt`, `clock_skew`, polling `revoked`. (AG-26, AG-60..62)
-- [ ] Mission: stop sending `AAuth-Mission`; use `mission_s256`; parse the new approval shape.
-  (AG-30..36)
-- [ ] Refresh inside a five-minute margin, top-down. (AG-70)
+- [x] `TokenExchange.requestPersonToken` — discovers `person_token_endpoint`, POSTs `resource`
+  (+ `mission_s256`, `capabilities`) under the agent token, handles 200 and 202 + polling.
+  Presenting it is `AgentRequestSigner.withToken(personToken)` with the `jwt` scheme. (AG-10, AG-12,
+  AG-20)
+- [x] `PersonTokenCache` — one per resource and per mission; evicts inside the five-minute margin;
+  `clear()` on key rotation; `needsRefresh(jwt, now)` applies the margin to any token. (AG-11,
+  AG-70)
+- [x] `presented_token` sent to `auth_token_endpoint` with the resource token when supplied
+  (omitted for pre-draft-11 servers). (AG-21)
+- [x] `ChallengeHandler` answers `requirement=person-token` with `jwt` (person or auth token) and
+  errors when the agent holds neither, instead of falling back to `hwk`. (AG-12)
+- [x] `ErrorCodes`: `revoked_jwt`, `clock_skew`, `expired_presented_token`,
+  `revoked_presented_token`, `revoked_resource_token`, `as_unreachable`, `user_unreachable`,
+  `invalid_subagent_token`, `invalid_account`, `mission_not_found`, polling `revoked`; removed
+  `invalid_agent_token` / `expired_agent_token`. (AG-60..62, AG-34)
+- [x] PS requests with a body cover `content-type` + `content-digest`. (AG-50)
+- [x] `AAuth-Mission` gone (Phase B); `mission_s256` named on the person-token request. (AG-30)
+- [ ] **Remaining** — `requirement=auth-token` delivered as 202 at the resource (AG-26: building
+  blocks exist — `extractResourceToken` reads the headers, `Poller` polls the pending URL — but no
+  end-to-end helper); `presented_token` on a clarification `updated_request` (AG-25); mission
+  approval-response parsing and `{mission_endpoint}/{mission_s256}` completion/update (AG-32..36);
+  sub-agent person-token flow (AG-40); top-down refresh orchestration (AG-70 policy).
 
 ### Phase D — Signatures, identifiers, revocation, strict Ed25519
 
