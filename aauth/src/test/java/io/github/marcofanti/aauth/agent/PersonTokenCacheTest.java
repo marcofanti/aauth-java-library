@@ -56,7 +56,7 @@ class PersonTokenCacheTest {
 
     @Test
     void tokenInsideFiveMinuteMarginIsEvicted() {
-        cache.put(RESOURCE, null, tokenExpiringIn(300));
+        cache.put(RESOURCE, null, tokenExpiringIn(299));
 
         assertThat(cache.get(RESOURCE, null)).isNull();
         // Evicted, so a later lookup still misses.
@@ -65,7 +65,8 @@ class PersonTokenCacheTest {
 
     @Test
     void tokenJustOutsideMarginIsReturned() {
-        String token = tokenExpiringIn(301);
+        // Exactly five minutes left is still usable: refresh when exp - now < 300 (reference rule).
+        String token = tokenExpiringIn(300);
         cache.put(RESOURCE, null, token);
 
         assertThat(cache.get(RESOURCE, null)).isEqualTo(token);

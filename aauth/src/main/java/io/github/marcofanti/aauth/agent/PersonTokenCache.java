@@ -71,7 +71,7 @@ public final class PersonTokenCache {
 
     /**
      * Returns whether a token (agent, person or auth) should be refreshed rather than presented:
-     * true when it has no {@code exp}, cannot be parsed, or has {@link #REFRESH_MARGIN} or less left.
+     * true when it has no {@code exp}, cannot be parsed, or has less than {@link #REFRESH_MARGIN} left.
      */
     public static boolean needsRefresh(String jwt, Instant now) {
         try {
@@ -81,8 +81,9 @@ public final class PersonTokenCache {
         }
     }
 
+    /** Refresh when fewer than {@link #REFRESH_MARGIN} remain ({@code exp - now < margin}). */
     private static boolean insideMargin(Instant expiresAt, Instant now) {
-        return !now.plus(REFRESH_MARGIN).isBefore(expiresAt);
+        return now.plus(REFRESH_MARGIN).isAfter(expiresAt);
     }
 
     private static Instant expiry(String jwt) {

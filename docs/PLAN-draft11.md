@@ -150,9 +150,9 @@ tests (rewritten against the 0.5.0 API).
 - [x] `Identifiers`: uppercase `local`, strict domain regex, credentials/ASCII checks; remove
   `validateServerUrl`.
 
-### D3 — revocation.py, missions.py
-- [ ] Revocation body/sign/send, `RevocationStore`, `RevocationManager` (cascade, `handle_request`).
-- [ ] Missions: approval build/parse, `missionRequest`, `tokenNeedsRefresh`.
+### D3 — revocation.py, missions.py — DONE
+- [x] Revocation body/sign/send, `RevocationStore`, `RevocationManager` (cascade, `handle_request`).
+- [x] Missions: approval build/parse, `missionRequest`, `tokenNeedsRefresh`.
 
 ### D4 — resource role (resource/verifier.py, challenge_builder.py, token_issuer.py)
 ### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py)
