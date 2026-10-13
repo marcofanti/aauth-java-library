@@ -174,9 +174,9 @@ tests (rewritten against the 0.5.0 API).
   `HttpTransport.defaultTransport()`, `Revocations` default); default clients do not follow redirects.
 - [x] `CachingJwksFetcher` validates discovery metadata; failed fetches count toward the rate limit.
 - [x] Deferred: claims header is `requirement=claims`; error bodies use `detail`.
-### D7 — interop + docs
+### D7 — interop + docs — DONE
 - [x] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override (9 two-way tests, done with D2).
-- [ ] PROGRESS decision log; README; DEMO integration contract (HTTPS identifiers).
+- [x] PROGRESS decision log; README; DEMO integration contract (HTTPS identifiers).
 
 ## Cross-repo sequencing
 

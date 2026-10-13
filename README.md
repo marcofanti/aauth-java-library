@@ -10,10 +10,11 @@ This is a port of [aauth-python-library](https://github.com/christian-posta/aaut
 with wire-format parity: requests signed by one library verify in the other (covered by
 cross-language interop tests).
 
-Implements protocol draft **-10** on the emission side (fully-specified `alg` per RFC 9864 —
-`Ed25519`, never `EdDSA` — in every JWK and token header; `account` claim; new error codes),
-with tolerant verification of pre-10 peers during the ecosystem transition (see
-[docs/PROGRESS.md](docs/PROGRESS.md)).
+Implements protocol draft **-11** and Signature-Key draft **-09**, ported module by module from
+the Python reference `aauth` 0.5.0 / `aauth-signing` 0.2.0. Verification is as strict as the
+reference: only `Ed25519`, `ES256` and `ES384` (RFC 9864; `EdDSA` is rejected), every JWK must
+carry its `alg`, and `iss`/`aud`/`ps` must be lowercase HTTPS origins without a port. See
+[docs/PROGRESS.md](docs/PROGRESS.md) for the decision log.
 
 ## Modules
 
@@ -24,7 +25,7 @@ with tolerant verification of pre-10 peers during the ecosystem transition (see
 
 `aauth-signing` is the low-level signing layer, usable on its own. `aauth` depends on it.
 The only third-party runtime dependency is Jackson; all cryptography is JDK-native
-(Ed25519 via JEP 339, ECDSA, RSA). Requires **Java 26+**.
+(Ed25519 via JEP 339, ECDSA). Requires **Java 26+**.
 
 ## Building
 
@@ -70,14 +71,17 @@ The returned map contains `Signature-Input`, `Signature`, `Signature-Key` (and
 `Content-Digest`/`Content-Type` when body components are covered) — add them to the outgoing
 request. Unlike the Python library, the caller's header map is never mutated.
 
-**What the signature covers by default:** `@method`, `@authority`, `@path`, `signature-key`
-(plus `@query` when a query string is present). Body signing is opt-in via
-`additionalComponents(List.of("content-digest"))`.
+**What the signature covers by default:** `@method`, `@authority`, `@path`, `signature-key`,
+plus `@query` when a query string is present, `authorization` when that header is sent, and
+`content-digest` when there is a body (an empty body counts). `Content-Digest` is always
+recomputed from the body when signing, and checked against the body when verifying.
 
 > **HTTP client defaults:** every HTTP client the library constructs itself (JWKS/metadata
-> fetching, token exchange) is pinned to **HTTP/1.1** — the JDK's default h2c upgrade breaks
-> h11-based servers (uvicorn/FastAPI person servers reject requests or drop bodies).
-> Clients you inject yourself are used as-is.
+> fetching, token exchange, revocation) is pinned to **HTTP/1.1**, because the JDK's default
+> h2c upgrade breaks h11-based servers. These clients also apply the reference's egress
+> policy (`Egress.admitPublicUrl`): HTTPS only, no credentials or fragment, and every resolved
+> address must be public. They do not follow redirects. Clients you inject are used as-is, so
+> you set their egress policy. That includes local development against loopback servers.
 
 ## Signature verification
 
@@ -99,18 +103,29 @@ boolean valid = SignatureVerifier.verify(
 ```java
 import io.github.marcofanti.aauth.tokens.*;
 
-// Resource token (resource → auth server)
-String resourceToken = ResourceTokens.create(new ResourceTokens.Spec(
-        "https://gateway.uma.lab", "https://alice-as.uma.lab",
-        "aauth:agent@portal.uma.lab", agentThumbprint, "data.read data.write",
-        resourcePrivateKey, "resource-key-1", null, null));
+// Person token (person server → agent), bounded by the agent token's exp
+String personToken = PersonTokens.create(PersonTokens.Spec.builder(
+                "https://ps.uma.lab", "https://gateway.uma.lab", "person-1",
+                agentCnfJwk, psPrivateKey, "ps-key-1")
+        .agentExp(agentTokenExp)
+        .build());
 
-// Auth token (auth server → agent)
+// Resource token (resource → PS/AS): verifies the presented token and derives
+// ps, sub, presented_jti, mission_s256 and tenant from it
+String resourceToken = ResourceTokens.create(ResourceTokens.Spec.builder(
+                "https://gateway.uma.lab", "https://ps.uma.lab", agentThumbprint,
+                resourcePrivateKey, "resource-key-1")
+        .presentedToken(personToken, jwksFetcher)
+        .scope("data.read")
+        .build());
+
+// Auth token (PS → agent): iss, aud (resource), sub (person), ps
 String authToken = AuthTokens.create(AuthTokens.Spec.builder(
-                "https://alice-as.uma.lab", "https://gateway.uma.lab", "aauth:agent@portal.uma.lab")
-        .cnfJwk(agentJwk)
-        .signingKey(authPrivateKey, "auth-key-1")
-        .act(Map.of("sub", "aauth:agent@portal.uma.lab"))
+                "https://ps.uma.lab", "https://gateway.uma.lab", "person-1", "https://ps.uma.lab")
+        .cnfJwk(agentCnfJwk)
+        .signingKey(psPrivateKey, "ps-key-1")
+        .dwk(AuthTokens.DWK_PERSON)
+        .bounds(agentTokenExp, personTokenExp)
         .scope("data.read")
         .build());
 
@@ -123,8 +138,8 @@ Map<String, Object> claims = AuthTokens.parseTokenClaims(token);
 ```java
 import io.github.marcofanti.aauth.headers.AAuthHeaders;
 
-// Parse an AAuth challenge from a resource's 401 response
-var challenge = AAuthHeaders.parseAAuthHeader(
+// Parse an AAuth-Requirement header (a strict RFC 8941 dictionary)
+var challenge = AAuthHeaders.parseSignatureRequirement(
         "requirement=auth-token; resource-token=\"...\"");
 
 // Build challenges
@@ -138,36 +153,29 @@ String interaction = AAuthHeaders.buildInteractionRequirement("https://ps.uma.la
 import io.github.marcofanti.aauth.agent.*;
 import io.github.marcofanti.aauth.resource.*;
 
-// Agent-side request signer
-AgentRequestSigner signer = AgentRequestSigner.builder(keyPair)
-        .agentId("https://portal.uma.lab")
-        .agentToken(agentToken)
-        .build();
+// Agent-side request signer (jwt scheme with the agent, person or auth token)
+AgentRequestSigner signer = AgentRequestSigner.builder(keyPair).agentToken(agentToken).build();
 Map<String, String> headers = signer.signRequest(
-        "GET", "https://gateway.uma.lab/api/data", Map.of(), null, "jwt");
+        "GET", "https://gateway.uma.lab/api/data", Map.of(), null);
 
-// Resource-side request verifier
-RequestVerifier verifier = new RequestVerifier(
-        List.of("gateway.uma.lab:443"), myJwksFetcher);
+// Resource-side request verifier (only the jwt Signature-Key scheme is accepted)
+RequestVerifier verifier = RequestVerifier.builder(List.of("gateway.uma.lab"), jwksFetcher)
+        .resourceId("https://gateway.uma.lab")
+        .trustedPersonServers(Set.of("https://ps.uma.lab"))
+        .build();
 RequestVerifier.Result result = verifier.verifyRequest(
-        method, targetUri, requestHeaders, requestBody,
-        /* requireIdentity */ true, /* requireAuthToken */ true);
+        method, targetUri, requestHeaders, requestBody, RequestVerifier.Requirements.authToken("data.read"));
 if (result.valid()) {
-    System.out.println("Agent: " + result.agentId() + ", Scopes: " + result.scopes());
+    System.out.println("Person: " + result.userSub() + ", Scopes: " + result.scopes());
+} else {
+    System.out.println(result.errorCode() + ": " + result.error());
 }
-// Mission-aware requests: verifyRequest rejects an AAuth-Mission header that isn't covered
-// by the signature, and surfaces the parsed header via result.mission(). Use MissionBinding
-// to check it against a mission document (s256) or a token's mission claim.
-// When a request carries both a Content-Digest header and a body, verifyRequest recomputes
-// the RFC 9530 digest from the body and rejects mismatches ("content-digest mismatch") —
-// stricter than the Python reference, which only verifies the header value. sha-256 and
-// sha-512 are supported; headers with only unrecognized algorithms are rejected.
 
-// Resource-side challenge building (401 responses)
+// Resource-side challenges: agent-token, person-token, or auth-token with a resource token
 ChallengeBuilder challenges = new ChallengeBuilder(
-        "https://gateway.uma.lab", resourcePrivateKey, "resource-key-1", "https://alice-as.uma.lab");
+        "https://gateway.uma.lab", resourcePrivateKey, "resource-key-1", "https://ps.uma.lab", jwksFetcher);
 var challenge = challenges.buildChallenge(
-        ChallengeBuilder.Spec.authToken(agentId, agentPublicKey, "data.read"));
+        ChallengeBuilder.Spec.authToken(presentedToken, agentPublicKey, "data.read"));
 response.setHeader(challenge.headerName(), challenge.headerValue());
 ```
 
@@ -183,12 +191,25 @@ Poller.PollingResult result = Poller.poll(Poller.Request.builder(pendingUrl, myS
         .build());
 ```
 
-The three-party exchange (resource token → auth token via the person server) is one call:
+The agent's person-server calls are one call each. Every token they return is verified
+before it is handed back:
 
 ```java
-String authToken = TokenExchange.exchangeResourceToken(
-        TokenExchange.Exchange.builder(resourceToken, keyPair, agentJwt).build());
+TokenExchange.Agent agent = TokenExchange.Agent.builder(keyPair, agentJwt, jwksFetcher)
+        .onInteraction((url, code) -> showUser(url, code))
+        .build();
+
+// Person token for a resource (person_token_endpoint)
+String personToken = TokenExchange.requestPersonToken(
+        agent, "https://ps.uma.lab", "https://gateway.uma.lab", null, Map.of());
+
+// Resource token → auth token (auth_token_endpoint), presenting the person token
+String authToken = TokenExchange.exchangeResourceToken(agent, TokenExchange.AuthTokenRequest.of(
+        resourceToken, personToken, "https://gateway.uma.lab", "https://ps.uma.lab"));
 ```
+
+Revocation (`revocation.Revocations`, `RevocationManager`) and missions (`missions.Missions`)
+mirror the reference's `revocation` and `missions` modules.
 
 ## Package structure
 
@@ -198,14 +219,17 @@ aauth-signing/                       io.github.marcofanti.aauth.signing
 ├── SignatureVerifier / VerifyRequest verify_signature — validates RFC 9421 signatures
 ├── SignatureScheme / SignatureKeyHeader  hwk/jwks_uri/jwt/jkt-jwt schemes
 ├── SignatureBase, SignatureInputHeader, SignatureHeader, SigningAlgorithms
+├── StructuredFields                 RFC 8941 dictionary parser
 ├── Jwts                             minimal compact JWT codec (JDK crypto)
 └── keys/                            KeyPairs, Jwk (RFC 7638 thumbprints, JWKS)
 
 aauth/                               io.github.marcofanti.aauth
 ├── ErrorCodes, Identifiers, exceptions
-├── http/                            AAuthRequest/AAuthResponse, DeferredResponses (202 + polling)
-├── keys/                            CachingJwksFetcher, JwksCache, JsonHttpClient
-├── tokens/                          AgentTokens, PersonTokens, AuthTokens, ResourceTokens
+├── http/                            HttpTransport, Egress, AAuthRequest/AAuthResponse, DeferredResponses
+├── keys/                            CachingJwksFetcher, JwksCache, JsonHttpClient, DefaultHttpClient
+├── tokens/                          AgentTokens, PersonTokens, AuthTokens, ResourceTokens, TokenVerifier, Delegation
+├── revocation/                      Revocations, RevocationManager, RevocationStore
+├── missions/                        Missions (approval, mission requests, refresh)
 ├── headers/                         AAuthHeaders, AcceptSignatureHeader, SignatureErrorHeader, MissionBinding
 ├── metadata/                        Metadata (.well-known build + fetch)
 ├── agent/                           AgentRequestSigner, ChallengeHandler, TokenExchange, Poller, PersonTokenCache
@@ -217,7 +241,8 @@ aauth/                               io.github.marcofanti.aauth
 ```bash
 mvn verify                                        # all unit tests + gates
 mvn test -pl aauth -am -Dtest=PythonInteropTest \
-    -Dsurefire.failIfNoSpecifiedTests=false       # cross-language interop (needs uv + ../aauth-python-library)
+    -Dsurefire.failIfNoSpecifiedTests=false       # cross-language interop (needs uv + aauth 0.5.x)
+# The Python checkout defaults to ../aauth-python-library; override with AAUTH_PYTHON_LIB=/path.
 ```
 
 ## Sibling implementations

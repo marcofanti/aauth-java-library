@@ -149,6 +149,61 @@ Java↔Python -11 interop is possible yet.
 **Cross-repo**: nothing released. The person-server and demo move to -11 against a library SNAPSHOT
 before any release; strict Ed25519 flips when the Python reference reaches -11.
 
+### Reference port D1–D7 (2026-10-13) — supersedes the Phase A–C strategy
+
+The Python reference reached draft-11 (christian-posta/aauth-python-library `fa3547a`: `aauth`
+0.5.0, `aauth-signing` 0.2.0). **Decision (user, 2026-10-12):** port the reference -11 module by
+module, reworking Phase A–C where it diverges. Java↔Python -11 interop is the acceptance gate.
+**Strictness decision (user):** fully strict like Python, on verification as well as emission:
+- `EdDSA` is rejected, and JWKs must carry `alg`.
+- `iss`/`aud`/`ps` must be lowercase HTTPS origins without a port.
+
+- **D1 signing**:
+  - `JoseException` codes and `Jwk.validateAlgorithm`. RSA is dropped, and only
+    Ed25519/ES256/ES384 are accepted.
+  - Strict `Signature-Input` parsing. `authorization` is auto-covered.
+  - `Content-Digest` is always recomputed on sign and checked on verify.
+  - Verification takes `requiredComponents` and `signatureWindow` (default 60 s).
+- **D2 tokens**:
+  - Generic `TokenVerifier` (typ→dwk table, server identifiers, 1-hour caps, `cnf.jwk`
+    thumbprint, revocation checker).
+  - Reshaped specs for agent, person, auth and resource tokens. Resource-token issuance
+    verifies the presented token and derives the claims from it.
+  - `Delegation` (sub-agent and upstream tokens).
+- **D3**: `revocation` package (`{jti, exp}`, `RevocationManager` cascade, signed send + 202
+  polling) and `missions.Missions`.
+- **D4 resource role**:
+  - `RequestVerifier.builder`, `jwt` scheme only, per-request `Requirements`.
+  - Wire error codes in `Result.errorCode()`.
+- **D5 agent role**:
+  - `TokenExchange` (`requestPersonToken`, `exchangeResourceToken`,
+    `completeDeferredResourceRequest`, injectable `HttpTransport`). Every token it returns is
+    verified.
+  - Reference `Poller` state machine, `ChallengeHandler`, `AgentRequestSigner`.
+- **D6**:
+  - Public `StructuredFields` and strict `AAuth-Requirement` parsing; token68
+    `Authorization: AAuth`.
+  - Validating metadata generators; `fetch`/`fetchAuthServer` check the issuer derived from
+    the well-known URL.
+  - `Egress.admitPublicUrl` on the library's default clients. Default clients no longer
+    follow redirects.
+  - `CachingJwksFetcher` validates metadata, and failed fetches count toward the rate limit.
+  - Error bodies use `detail`.
+- **D7**: `PythonInteropTest` rewritten for 0.5.0 (9 two-way tests, `AAUTH_PYTHON_LIB` override);
+  README and DEMO integration contract rewritten for -11.
+
+Deviations retired by the port:
+- Resource-level digest re-check: now done in the signing layer.
+- `http://` ps tolerance.
+- `EdDSA` tolerance.
+- `Accept-Signature` challenges for credential levels.
+- The `AAuth-Mission` header and coverage enforcement.
+- The pre-11 `presented_token` omission.
+
+Kept on purpose:
+- `PersonTokenCache` (not in the reference).
+- `content-type`/`content-digest` coverage on PS POSTs.
+
 ## Final review (2026-07-30)
 
 A security-focused review (java-reviewer agent) of the finished port found 4 issues, all fixed
@@ -195,12 +250,15 @@ Per user request (2026-07-30), test fixtures and examples use the local UMA lab 
 instead of `localhost`/`*.example`: `gateway.uma.lab` (resource), `alice-as.uma.lab` (auth
 server), `ps.uma.lab` (person server), `portal.uma.lab` (agent server), `grafana.uma.lab` /
 `keycloak.uma.lab` (miscellaneous). These resolve to 127.0.0.1 on this machine, so the
-live-socket tests (JDK HttpServer) bind locally and use the lab names in URLs. The single
-`http://localhost:8080` in `MetadataTest` is intentional — it tests the spec's
-localhost-only HTTP carve-out itself.
+live-socket tests (JDK HttpServer) bind locally and use the lab names in URLs. Since D6, the
+library's default clients refuse loopback addresses (egress admission). Live-socket tests
+therefore inject their own `HttpClient`, and `MetadataTest` asserts that
+`http://localhost` is rejected (draft-11 has no localhost carve-out).
 
 ## Deviations from the Python library
 
+- *Retired in the draft-11 port (2026-10-13): the next two entries describe 0.2.x. Digest
+  checking moved into `SignatureVerifier`, and the `AAuth-Mission` header no longer exists.*
 - **Content-Digest is enforced in the resource role (2026-08-02)**: both this library's
   low-level `SignatureVerifier` and the Python reference only sign/verify the
   `Content-Digest` *header*, so a tampered body with an intact header passes the HTTP

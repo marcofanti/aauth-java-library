@@ -14,79 +14,52 @@ contract those projects depend on.
 
 ---
 
-## 1. Library state as of 2026-08-06
+## 1. Library state as of 2026-10-13
 
 Coordinates: `io.github.marcofanti:aauth` and `io.github.marcofanti:aauth-signing`.
-`0.2.2` (Apache-2.0) is the current release; `main` is `0.3.0-SNAPSHOT`. Java 26+, Jackson is
-the only third-party runtime dependency. 215 tests, CI green.
+`0.2.2` (Apache-2.0) is the current release. Branch `draft11` (to be released as `0.3.0`)
+ports AAuth protocol **draft-11** / Signature-Key **draft-09** from the Python reference
+`aauth` 0.5.0 / `aauth-signing` 0.2.0. Java 26+; Jackson is the only third-party runtime
+dependency. 353 tests, including two-way Java↔Python -11 interop.
 
-### Implemented today (2026-08-06)
+### Breaking changes from 0.2.x that consumers must handle
 
-**AAuth protocol draft -10 / Signature-Keys draft -08 compliance** (PR #10) — strategy:
-*compliant emission, tolerant verification* (the Python reference is still pre-10):
-
-- **Fully-specified `alg` (RFC 9864)**: every JWK the library emits carries `alg`
-  (`Ed25519` for OKP, `ES256`/`ES384` for EC) — including `cnf.jwk` in tokens and the
-  inline `hwk` Signature-Key parameters. `Jwk.requireConsistentAlg` runs inside every
-  `Jwk.toPublicKey`: a JWK with `alg` present but polymorphic (`EdDSA`), symmetric
-  (`HS*`), `none`, unknown, or disagreeing with `kty`/`crv` is rejected. An **absent**
-  `alg` is still tolerated (legacy peers) — this flips to strict once the ecosystem is
-  on -10.
-- **Token headers sign as `alg: Ed25519`** (was `EdDSA`). Verification accepts both
-  `Ed25519` and legacy `EdDSA` during the transition.
-- **New error codes**: `ErrorCodes.ERROR_UNSUPPORTED_SCHEME` (`unsupported_scheme`),
-  `ErrorCodes.ERROR_CACHE_MISS` (`cache_miss`), alongside the existing
-  `unsupported_algorithm`.
-- **New response headers**: `AAuthHeaders.HEADER_ACCEPT_SIGNATURE_SCHEME` /
-  `HEADER_ACCEPT_SIGNATURE_ALG` with `buildAcceptListHeader` / `parseAcceptListHeader`
-  (comma-separated token lists, e.g. `Ed25519, ES256`).
-- **`account` claim** (draft-10 §12.3, multi-account resources):
-  `ResourceTokens.Spec` gained a 10th component `account`;
-  `AuthTokens.Spec.builder(...).account(...)`. The resource echoes the authorization
-  request's `account` parameter into the resource token; **the PS copies it into the
-  auth token**.
-- **Agent token verification steps (draft-10 §5.2.4)**: `AgentTokens.verify` now
-  validates `ps` (must be a valid HTTPS server identifier) and the new `parent_agent`
-  claim (must be a valid `aauth:local@domain` agent identifier; marks a sub-agent token —
-  **the PS enforces the single-level sub-agent rule**). Both claims are creatable via
-  `AgentTokens.Spec.builder(...).ps(...)/.parentAgent(...)`.
-- Interop: Python→Java tests unchanged and green; the Java→Python token test asserts
-  structural parsing and auto-heals to full verification when the Python library reaches
-  -10.
-
-**Mission binding helpers + coverage enforcement** (PR #9, also today):
-
-- `MissionBinding` (package `io.github.marcofanti.aauth.headers`):
-  - `s256(byte[] missionDocument)` — unpadded base64url SHA-256, byte-identical to the
-    Python PS reference (`ps/impl/mission_utils.py::s256_hash_bytes`).
-  - `matchesDocument(AAuthHeaders.Mission, byte[])` — header ↔ mission JSON hash check.
-  - `matchesClaim(AAuthHeaders.Mission, Map missionClaim)` — header ↔ token `mission`
-    claim (`approver` and `s256` must both match).
-- `RequestVerifier.Result` now carries `result.mission()` — the parsed `AAuth-Mission`
-  header, guaranteed signature-covered: a request bearing `AAuth-Mission` whose
-  Signature-Input does **not** list `aauth-mission` is rejected with
-  `aauth-mission header not covered by signature`.
-- Division of responsibility: mission *lifecycle* (creation, approval, storage, canonical
-  mission-JSON construction, termination, `mission_terminated`) is **person-server
-  territory**; the library provides the wire primitives and binding checks above.
-
-**Docs** (PR #11): README "Sibling implementations" section (TypeScript reference
-`aauth-dev/packages-js`, Python `christian-posta/aauth-python-library`, PHP
-`clawdreyhepburn/aauth-php`, this library).
-
-### Recent behavior the PS must know about (2026-08-02)
-
-- **HTTP/1.1 pinned** in every library-constructed `HttpClient` (JWKS/metadata fetch,
-  `TokenExchange`) — the JDK's h2c upgrade breaks h11/uvicorn servers. Caller-injected
-  clients are untouched. A Java PS on the JDK HTTP server is unaffected either way.
-- **RFC 9530 body-digest enforcement**: `RequestVerifier` recomputes `Content-Digest`
-  (sha-256 and sha-512, parsed as a dictionary) from the body and rejects mismatches
-  (`content-digest mismatch`) and unknown-only algorithms
-  (`unsupported content-digest algorithm`). Stricter than the Python reference.
-- Scope hardening: blank `scope` claims don't satisfy `requireAuthToken`; scope splitting
-  collapses whitespace.
-- Error Prone + NullAway are enforced at build time; `aauth-signing` is fully
-  `@NullMarked` (JSpecify).
+- **Strict verification, same as the reference.** Only `Ed25519`, `ES256` and `ES384`
+  (`EdDSA` and RSA are rejected). Every JWK must carry a matching `alg`. Token `iss`, `aud`
+  and `ps` must be lowercase HTTPS origins with no port, on verification as well as
+  emission. **Every server identifier in a deployment must be `https://host`**, including
+  local development. Plain `http://` and `:port` identifiers are refused.
+- **Token model (draft-11):**
+  - New person tokens (`aa-person+jwt`, `PersonTokens`), issued by the PS at
+    `person_token_endpoint`.
+  - Resource and auth tokens drop `agent`/`act`. They carry the person as `(iss, sub)`, plus
+    `ps`, `presented_jti` and optional `mission_s256`/`tenant`.
+  - Revocation is `{jti, exp}` (`revocation` package).
+- **Resource role:**
+  - `RequestVerifier.builder(authorities, fetcher)` accepts only the `jwt` Signature-Key
+    scheme.
+  - Checks per-request `Requirements` (`identity()`, `personToken()`,
+    `authToken(scopes...)`, `sessionToken()`).
+  - Failures report `Result.errorCode()` (e.g. `insufficient_scope`, `revoked_jwt`).
+  - The `AAuth-Mission` header is gone; missions travel as the `mission_s256` claim.
+- **Challenges:** `AAuth-Requirement` is parsed as a strict RFC 8941 dictionary. Requirement
+  levels are `agent-token`, `person-token` and `auth-token` (with `resource-token`), plus
+  the deferred `interaction`/`approval`/`clarification`/`claims`.
+- **Metadata:**
+  - The PS document needs `issuer`, `jwks_uri`, `auth_token_endpoint` and
+    `person_token_endpoint`. `token_endpoint` is gone, and there is no fallback location.
+  - Agents fetch only `{ps}/.well-known/aauth-person.json`, and `issuer` must equal the PS
+    identifier.
+  - Generators validate their output.
+- **Egress:**
+  - The library's own default HTTP clients admit only public HTTPS URLs and do not follow
+    redirects.
+  - Against a loopback or private PS (local demo), inject a client:
+    `TokenExchange.Agent.builder(...).transport(HttpTransport.jdk(client))`,
+    `new CachingJwksFetcher(new DefaultHttpClient(client), ...)`, or the `httpClient`
+    argument of `Revocations.send`.
+- **Bodies:** error bodies use `detail` (was `error_description`). A `202` claims
+  requirement header is just `requirement=claims`, with the claims in the body.
 
 ---
 
@@ -102,48 +75,38 @@ flows are documented in that repo (`docs/PLAN.md`, `docs/MODES.md`, `docs/CONSEN
 This section records only what the demo and the **`aauth-java-person-server`** consume from
 the library.
 
-### Person-server integration checklist
+### Person-server integration checklist (draft-11)
 
-The PS is the non-trivial consumer. Endpoint by endpoint, with the library APIs to use:
+1. **Metadata**: build `/.well-known/aauth-person.json` with
+   `Metadata.personServer(ps, personTokenEndpoint, authTokenEndpoint, jwksUri)`, then add
+   optional fields with `.with(...)` (`interaction_endpoint`, `mission_endpoint`,
+   `revocation_endpoint`, ...). Publish the JWKS with `alg` members (`Jwk.publicKeyToJwk`).
+2. **Person token endpoint** (POST, signed with the agent token, JSON body with `resource`,
+   and optionally `mission_s256`, `subagent_token`, `upstream_token`):
+   - Verify the HTTP signature (`jwt` scheme) and the agent token
+     (`AgentTokens.verify(token, fetcher, expectedAud)`).
+   - Issue the token with `PersonTokens.create(PersonTokens.Spec.builder(ps, resource, sub,
+     agentCnfJwk, psKey, kid).agentExp(agentExp)...)`. Return `200 {"person_token": ...}`.
+3. **Auth token endpoint** (POST, JSON with `resource_token` and `presented_token`, and
+   optionally `subagent_token`/`upstream_token`):
+   - Verify the resource token with `ResourceTokens.verify(token, fetcher,
+     ResourceTokens.VerifyOptions(...))`.
+   - Issue the auth token with `AuthTokens.Spec.builder(ps, resource, sub, ps).cnfJwk(...)
+     .signingKey(...).dwk(AuthTokens.DWK_PERSON).bounds(agentExp, presentedExp)`. Return
+     `200 {"auth_token": ..., "expires_in": ...}` (`DeferredResponses.buildSuccessResponse`).
+   - Deferred: answer `202` with `DeferredResponses.buildPendingResponseHeaders/Body`
+     (`PendingSpec.builder(location).require("interaction").code(...).url(...)`).
+4. **Pending URL** (GET, signed): `202` while pending, `200` + token when approved, `403`
+   with `DeferredResponses.buildPollingErrorBody("denied", ...)` (`detail`) on denial. The
+   Location must stay on the same origin; the poller enforces this.
+5. **Revocation**: `RevocationManager` plus `Revocations.send` for cascading `{jti, exp}`
+   revocations to resources and access servers.
+6. **Missions**: `Missions.buildApproval`/`parseApproval`/`missionRequest`. Mission
+   lifecycle (approval UI, storage, termination) remains the PS's concern; tokens carry
+   `mission_s256`.
 
-1. **Metadata**: serve `/.well-known/aauth-person.json` with `issuer`, `token_endpoint`,
-   `jwks_uri` (+ `interaction_endpoint`). The library's `Metadata.personServer(...)` and
-   `Metadata.fetchPersonServer(...)` define the shape; the agent falls back to
-   `{aud}/token` if metadata is unreachable.
-2. **Token endpoint** (POST, JSON `{"resource_token": ...}`):
-   - Verify the HTTP signature (`scheme=jwt` carrying the agent token) — use
-     `SignatureVerifier`/`RequestVerifier` with a `JwksFetcher`.
-   - Verify the resource token with `ResourceTokens.verify(token, fetcher, psId,
-     agentId, agentJkt)`.
-   - Immediate grant → `200 {"auth_token": ..., "expires_in": ...}` via
-     `DeferredResponses.buildSuccessResponse`.
-   - Deferred → `202` with `Location` + `Retry-After` + interaction requirement via
-     `DeferredResponses.buildPendingResponseHeaders/Body` (`PendingSpec.builder(location)
-     .require("interaction").code(...).url(...)`); codes from
-     `DeferredResponses.generateInteractionCode()`.
-3. **Pending URL** (GET, signed): `202` while pending / `200` + auth token when approved /
-   `403` + `{"error": "denied"}` on denial (`DeferredResponses.buildPollingErrorBody`).
-   Honor `Retry-After`; the library poller handles 429/503 slow-down automatically.
-4. **Interaction page**: human-visible approval showing agent identity, requested scope,
-   and the code (the poller appends `?code=` to the URL from the `AAuth-Requirement`
-   header).
-5. **Auth token issuance**: `AuthTokens.Spec.builder(psId, resourceId, agentId)
-   .cnfJwk(agentCnfJwk).signingKey(psKey, kid).act(Map.of("sub", agentId))
-   .scope(...).account(...).dwk("aauth-person.json").build()` — the library already
-   emits draft-10 (`alg: Ed25519`, `alg` inside `cnf.jwk`).
-6. **Draft-10 posture**: publish PS JWKS with `alg` members (automatic if built with
-   `Jwk.publicKeyToJwk`); reject unsupported algs with `Signature-Error:
-   error=unsupported_algorithm` + `Accept-Signature-Alg: Ed25519` (use
-   `AAuthHeaders.buildAcceptListHeader(List.of("Ed25519"))`).
-7. **Mission binding**: verify an inbound `AAuth-Mission` against a token's `mission` claim
-   with `MissionBinding.matchesClaim(...)` / `matchesDocument(...)`; `RequestVerifier`
-   already enforces that the header is signature-covered. Mission *lifecycle* (approval,
-   storage, canonical mission-JSON, termination) is the PS's own concern.
+### Interop status
 
-### Known transition caveat
-
-The Python reference library is still pre-draft-10: it verifies our **HTTP signatures**
-(the `hwk` parser ignores the extra `alg` param) but rejects our **tokens** (`Ed25519` vs
-`EdDSA`). Any cross-implementation step against Python demonstrates HTTP-signature interop,
-not token interop, until upstream updates. `x509` and the new sigkey-08 schemes (`jwks`,
-`self-jwt`, `cached`) are not implemented (phase B; tracked in PROGRESS.md).
+The Python reference (`aauth` 0.5.0) is on draft-11, and `PythonInteropTest` exercises
+tokens and HTTP signatures in both directions. Set `AAUTH_PYTHON_LIB` to a 0.5.x checkout to
+run it locally; CI skips it when no checkout is present.
