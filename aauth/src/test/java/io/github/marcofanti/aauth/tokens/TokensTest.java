@@ -241,8 +241,8 @@ class TokensTest {
     }
 
     @Test
-    void legacyEdDsaSignedTokenStillVerifies() {
-        // Transition tolerance: pre-draft-10 peers (the Python reference) sign with "EdDSA".
+    void legacyEdDsaSignedTokenIsRejected() {
+        // Draft-11 / RFC 9864: the polymorphic "EdDSA" is no longer accepted.
         Map<String, Object> header =
                 new LinkedHashMap<>(Map.of("typ", AgentTokens.TYPE, "alg", "EdDSA", "kid", "key-1"));
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -253,7 +253,8 @@ class TokensTest {
         payload.put("exp", Instant.now().getEpochSecond() + 300);
         String legacyToken = Jwts.signEdDsa(header, payload, issuerKeys.getPrivate());
 
-        assertThat(AgentTokens.verify(legacyToken, issuerJwksFetcher, null)).containsEntry("sub", "delegate-1");
+        assertThatThrownBy(() -> AgentTokens.verify(legacyToken, issuerJwksFetcher, null))
+                .isInstanceOf(TokenException.class);
     }
 
     @Test

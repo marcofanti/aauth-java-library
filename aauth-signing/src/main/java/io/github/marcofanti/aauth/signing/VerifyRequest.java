@@ -2,6 +2,7 @@ package io.github.marcofanti.aauth.signing;
 
 import java.security.PublicKey;
 import java.time.Clock;
+import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
 
@@ -17,6 +18,10 @@ import org.jspecify.annotations.Nullable;
  * @param signatureKey the {@code Signature-Key} header value
  * @param publicKey optional pre-resolved public key (used by the {@code hwk} scheme)
  * @param jwksFetcher key discovery callback, required for {@code jwks_uri} / {@code jwt}
+ * @param requiredComponents components the signature MUST cover; {@code null} means {@code @method},
+ *     {@code @authority}, {@code @path}, {@code signature-key} ({@code authorization} is added
+ *     whenever the request carries that header)
+ * @param signatureWindow allowed {@code created} skew in seconds; non-positive means 60
  * @param clock clock used for the created-timestamp window; defaults to the system clock
  */
 // byte[] body is intentional: raw request bytes; record equality is never used.
@@ -31,7 +36,12 @@ public record VerifyRequest(
         String signatureKey,
         @Nullable PublicKey publicKey,
         @Nullable JwksFetcher jwksFetcher,
+        @Nullable List<String> requiredComponents,
+        long signatureWindow,
         Clock clock) {
+
+    /** Default allowed {@code created} skew in seconds (draft-11). */
+    public static final long DEFAULT_SIGNATURE_WINDOW = 60;
 
     public VerifyRequest {
         if (method == null || targetUri == null) {
@@ -42,6 +52,8 @@ public record VerifyRequest(
                     "Signature-Input, Signature and Signature-Key header values are required");
         }
         headers = headers == null ? Map.of() : Map.copyOf(headers);
+        requiredComponents = requiredComponents == null ? null : List.copyOf(requiredComponents);
+        signatureWindow = signatureWindow <= 0 ? DEFAULT_SIGNATURE_WINDOW : signatureWindow;
         clock = clock == null ? Clock.systemUTC() : clock;
     }
 
@@ -60,6 +72,8 @@ public record VerifyRequest(
         private @Nullable String signatureKey;
         private @Nullable PublicKey publicKey;
         private @Nullable JwksFetcher jwksFetcher;
+        private @Nullable List<String> requiredComponents;
+        private long signatureWindow = DEFAULT_SIGNATURE_WINDOW;
         private @Nullable Clock clock;
 
         private Builder(String method, String targetUri) {
@@ -95,6 +109,18 @@ public record VerifyRequest(
             return this;
         }
 
+        /** Components the signature MUST cover; {@code null} means the draft-11 default set. */
+        public Builder requiredComponents(List<String> requiredComponents) {
+            this.requiredComponents = requiredComponents;
+            return this;
+        }
+
+        /** Allowed {@code created} skew in seconds (default 60). */
+        public Builder signatureWindow(long signatureWindow) {
+            this.signatureWindow = signatureWindow;
+            return this;
+        }
+
         public Builder clock(Clock clock) {
             this.clock = clock;
             return this;
@@ -115,6 +141,8 @@ public record VerifyRequest(
                     signatureKey,
                     publicKey,
                     jwksFetcher,
+                    requiredComponents,
+                    signatureWindow,
                     clock == null ? Clock.systemUTC() : clock);
         }
     }

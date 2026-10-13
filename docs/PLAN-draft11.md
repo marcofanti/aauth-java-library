@@ -8,18 +8,16 @@ Authoritative upstream migration guide: <https://github.com/dickhardt/AAuth/tree
 **resource** (`RS-*`) checklist items — the only two roles this library implements — to concrete
 library changes. PS and AS roles are out of scope (person-server territory).
 
-## Upstream state (gate)
+## Upstream state (gate) — SUPERSEDED 2026-10-12
 
-The Python reference library (`../aauth-python-library`, 0.3.5) is **still on draft-10** — its latest
-commit only just added the fully-specified `Ed25519` alg; no `person_token`, `presented_token`,
-`mission_s256`, `auth_token_endpoint`, or `session-token` anywhere. So:
+> **Update 2026-10-12:** the Python reference shipped a full draft-11 implementation upstream
+> (`christian-posta/aauth-python-library` `1273992`/`fa3547a`, aauth **0.5.0**, aauth-signing
+> **0.2.0**). Phases A–C below were written spec-first while Python was on -10; from Phase D on the
+> work is a **port of the reference -11**, per the "Reference port (D1–D7)" section at the end. The
+> decisions there override the tolerance strategy described next.
 
-- **No Java↔Python interop test is possible for -11.** The existing interop tests stay pinned to -10
-  semantics and continue to assert the -10 wire format; a new `@Disabled`/documented placeholder
-  tracks the -11 interop that auto-heals once Python updates.
-- Strategy, same as the -10 jump: **compliant emission, tolerant verification**. Emit the -11 wire
-  format; keep accepting -10 shapes where a verifier can, so the ecosystem (person-server, demo,
-  Python) can migrate independently.
+*(Original, now historical:)* The Python reference library (0.3.5) was still on draft-10, so the
+strategy was compliant emission with tolerant verification and no -11 interop.
 
 ## Headline changes (what -11 does)
 
@@ -109,34 +107,65 @@ Each phase lands on `draft11` behind `mvn verify` (tests + JaCoCo 80% + Spotless
   approval-response parsing and `{mission_endpoint}/{mission_s256}` completion/update (AG-32..36);
   sub-agent person-token flow (AG-40); top-down refresh orchestration (AG-70 policy).
 
-### Phase D — Signatures, identifiers, revocation, strict Ed25519
+## Reference port (D1–D7) — replaces the spec-first Phase D/E
 
-- [ ] Fold `strict-alg-draft10` in: Ed25519 MUST, reject legacy `EdDSA` on emit; verification flips
-  to strict once upstream emits Ed25519 (still gated — keep tolerant until then, but the spec now
-  backs strict). (AG-52, AP-05, RS-50)
-- [ ] `Identifiers` — allow `A-Z` in the agent `local` part; exact case-sensitive compare, no
-  folding. (AP-01, RS-52)
-- [ ] Revocation — `{jti, exp}` request signed under `jwks_uri`, cascade semantics, new error set
-  (`unsupported_iss`, `rate_limited`), no 404. New `revoked_jwt`/`clock_skew` `Signature-Error`
-  codes. (AG-61, RS-60/61)
-- [ ] Tighten JWT checks: `exp` no skew; `exp − iat ≤ 1h` for person/auth tokens; `iat` not a
-  validity check. (RS-51)
-- [ ] Cover `content-digest` + `content-type` on every PS/AS request body. (AG-50)
+Source of truth: Python aauth **0.5.0** / aauth-signing **0.2.0** (`fa3547a`), checked out at
+`../aauth-python-library` (`main`). Port module by module; where Phase A–C diverged from the
+reference, the reference wins. Acceptance gate: `mvn verify` green **and** Java↔Python -11 interop
+tests (rewritten against the 0.5.0 API).
 
-### Phase E — Call chaining (resource → downstream), optional headers
+**Decisions (user, 2026-10-12):**
+- **Fully strict, like the reference.** JWT and JWK `alg` ∈ {`Ed25519`, `ES256`, `ES384`};
+  `EdDSA` and a missing JWK `alg` are rejected; RSA dropped from JWK→key. Every token needs `iat` and
+  `exp` (`exp > now`, no skew; `exp > iat`). `iss`/`aud`/`ps` must be lowercase HTTPS origins without
+  port/path (`validateServerUrl`, the http-tolerant variant, is removed). Consequence: the
+  person-server and demo must serve their identifiers over HTTPS without ports to interoperate.
+- The `strict-alg-draft10` branch is superseded by D1 (delete it once D1 lands).
 
-- [ ] Resource-as-its-own-AP downstream flow (RS-70..75) — lower priority; the library exposes the
-  pieces but the demo drives it.
-- [ ] `latest`-draft additions sighted on GitHub `main` (post -11): `AAuth-Access` /
-  `AAuth-Capabilities` headers, five named access modes. Track separately once -11 is published-draft
-  stable.
+### D1 — aauth-signing (signing/verifier.py, signer.py, signature_*.py, keys/jwk.py, tokens/common.py)
+- [ ] `Jwk.validateAlgorithm(jwk, expectedAlg)` — strict alg set; `unsupported_algorithm` vs
+  `invalid_key` codes; drop RSA from `toPublicKey`/`publicKeyToJwk` (thumbprint keeps RSA).
+- [ ] `Jwts` — strict verify: `kid` required, exactly one JWKS key with that `kid`, key `alg` ==
+  header `alg`, `iat`/`exp` required, `exp > now`, `exp > iat`; `Ed25519` only (no `EdDSA`).
+- [ ] `SignatureInputHeader` — strict SF parse: one label, inner list of strings, no duplicates,
+  integer `created`/`expires`.
+- [ ] `SignatureBase` — `authorization` component; arbitrary header components; empty body is a body.
+- [ ] `RequestSigner` — auto-cover `authorization`; always recompute `Content-Digest`; default
+  `Content-Type: application/octet-stream`; dedupe components; `hwk` key carries `alg`.
+- [ ] `SignatureVerifier` — required components (+`authorization`), `created` window with
+  `clock_skew`, `expires`, content-digest verified against the body when covered, `keyid` must match
+  the Signature-Key, strict `jwt`/`jkt-jwt`/`hwk`/`jwks_uri` key validation, error codes surfaced.
+
+### D2 — tokens (tokens/common.py, agent_token.py, person_token.py, auth_token.py, resource_token.py, delegation.py; identifiers.py)
+- [ ] Generic `verifyToken` (typ→dwk table, server identifiers, required claims, 1-hour cap for
+  person/auth, PS-issued auth `ps == iss`, `mission_s256` format, `scope` type, `cnf.jwk` thumbprint,
+  revocation checker → `revoked_jwt`, wire error codes).
+- [ ] Agent tokens: strict `iss`/`sub` (agent identifier)/`ps`/`parent_agent`; sub-agent issuance.
+- [ ] Person tokens: `exp` bounded by agent/mission/upstream expirations; drop `account`/`scope`/
+  `capabilities` (not in the reference).
+- [ ] Auth tokens: bounded by agent/presented/upstream/mission; `dwk` ∈ {person, access} rules.
+- [ ] Resource tokens: issuance verifies the presented token and derives `ps`/`sub`/`presented_jti`/
+  `mission_s256`/`tenant`; verification re-checks the binding; 300 s default lifetime.
+- [ ] Delegation: `verifySubagentToken`, `verifyUpstreamToken`.
+- [ ] `Identifiers`: uppercase `local`, strict domain regex, credentials/ASCII checks; remove
+  `validateServerUrl`.
+
+### D3 — revocation.py, missions.py
+- [ ] Revocation body/sign/send, `RevocationStore`, `RevocationManager` (cascade, `handle_request`).
+- [ ] Missions: approval build/parse, `missionRequest`, `tokenNeedsRefresh`.
+
+### D4 — resource role (resource/verifier.py, challenge_builder.py, token_issuer.py)
+### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py)
+### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py
+### D7 — interop + docs
+- [ ] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override.
+- [ ] PROGRESS decision log; README; DEMO integration contract (HTTPS identifiers).
 
 ## Cross-repo sequencing
 
-1. Library `draft11` branch (this work) — emit -11, verify tolerantly. No release yet.
-2. Person-server + demo move to -11 against a library SNAPSHOT.
+1. Library `draft11` branch — port the reference -11 (D1–D7). No release yet.
+2. Person-server + demo move to -11 (and HTTPS identifiers) against a library SNAPSHOT.
 3. Release the library once the three repos interoperate on -11.
-4. Flip strict Ed25519 / strict verification when the Python reference reaches -11.
 
 ## Docs to update on completion
 

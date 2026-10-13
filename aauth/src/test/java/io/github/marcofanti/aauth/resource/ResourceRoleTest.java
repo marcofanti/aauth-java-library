@@ -122,10 +122,12 @@ class ResourceRoleTest {
                 new LinkedHashMap<>(Map.of("typ", "aa-auth+jwt", "alg", "Ed25519", "kid", "as-key-1"));
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", AUTH_SERVER);
+        payload.put("dwk", "aauth-access.json");
         payload.put("sub", PERSON_SUB);
         payload.put("ps", PS);
         payload.put("cnf", Map.of("jwk", agentJwk));
         payload.put("scope", "  ");
+        payload.put("iat", java.time.Instant.now().getEpochSecond());
         payload.put("exp", java.time.Instant.now().getEpochSecond() + 300);
         String emptyScopeToken =
                 io.github.marcofanti.aauth.signing.Jwts.signEdDsa(header, payload, authServerKeys.getPrivate());
@@ -190,45 +192,9 @@ class ResourceRoleTest {
 
         RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, tamperedBody, false, false);
 
+        // Draft-11: a covered Content-Digest is checked against the body by the signature layer.
         assertThat(result.valid()).isFalse();
-        assertThat(result.error()).isEqualTo("content-digest mismatch");
-    }
-
-    private Map<String, String> signedWithProvidedDigest(byte[] body, String contentDigest) {
-        // The signer returns only headers it adds, so a caller-supplied Content-Digest must be
-        // merged back into the wire headers alongside the signature headers.
-        Map<String, String> headers = withSignatureHeaders(io.github.marcofanti.aauth.signing.RequestSigner.sign(
-                io.github.marcofanti.aauth.signing.SignRequest.builder("POST", TARGET)
-                        .keyPair(agentKeys)
-                        .scheme(new io.github.marcofanti.aauth.signing.SignatureScheme.Hwk())
-                        .body(body)
-                        .headers(Map.of("Content-Digest", contentDigest))
-                        .additionalComponents(List.of("content-digest"))
-                        .build()));
-        headers.put("Content-Digest", contentDigest);
-        return headers;
-    }
-
-    @Test
-    void sha512ContentDigestIsAccepted() {
-        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Map<String, String> headers = signedWithProvidedDigest(
-                body, io.github.marcofanti.aauth.signing.SignatureBase.contentDigest(body, "sha-512"));
-
-        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
-
-        assertThat(result.valid()).isTrue();
-    }
-
-    @Test
-    void unknownOnlyContentDigestAlgorithmIsRejected() {
-        byte[] body = "{\"amount\": 100}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        Map<String, String> headers = signedWithProvidedDigest(body, "unixsum=:AAAA:");
-
-        RequestVerifier.Result result = verifier.verifyRequest("POST", TARGET, headers, body, false, false);
-
-        assertThat(result.valid()).isFalse();
-        assertThat(result.error()).isEqualTo("unsupported content-digest algorithm");
+        assertThat(result.error()).isEqualTo("Signature verification failed");
     }
 
     @Test

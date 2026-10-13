@@ -129,26 +129,178 @@ class SignVerifyRoundTripTest {
     }
 
     @Test
-    void aauthMissionHeaderIsCoveredWhenPresent() {
+    void authorizationHeaderIsAlwaysCovered() {
         KeyPair keyPair = KeyPairs.generateEd25519();
-        Map<String, String> headers = Map.of("AAuth-Mission", "jwt=aaa.bbb.ccc");
+        Map<String, String> headers = Map.of("Authorization", "AAuth opaque-session");
 
-        Map<String, String> signed = sign(SignRequest.builder("POST", TARGET)
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
                 .keyPair(keyPair)
                 .scheme(new SignatureScheme.Hwk())
                 .headers(headers)
                 .build());
 
-        assertThat(signed.get("Signature-Input")).contains("aauth-mission");
-
+        assertThat(signed.get("Signature-Input")).contains("\"authorization\"");
         Map<String, String> allHeaders = new LinkedHashMap<>(headers);
         allHeaders.putAll(signed);
-        assertThat(SignatureVerifier.verify(VerifyRequest.builder("POST", TARGET)
-                        .headers(allHeaders)
-                        .signatureHeaders(
-                                signed.get("Signature-Input"), signed.get("Signature"), signed.get("Signature-Key"))
-                        .build()))
+        assertThat(SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, allHeaders).build()))
                 .isTrue();
+    }
+
+    @Test
+    void uncoveredAuthorizationHeaderIsInvalidInput() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = new LinkedHashMap<>(sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .build()));
+        signed.put("Authorization", "AAuth injected-after-signing");
+
+        assertThatThrownBy(() -> SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, signed).build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("invalid_input"))
+                .satisfies(e -> assertThat(((HttpSignatureException) e).details())
+                        .containsEntry(
+                                "required_input",
+                                List.of("@authority", "@method", "@path", "authorization", "signature-key")));
+    }
+
+    @Test
+    void configuredRequiredComponentsAreEnforced() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .build());
+
+        assertThatThrownBy(() -> SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
+                        .requiredComponents(List.of("@method", "content-digest"))
+                        .build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("invalid_input"));
+    }
+
+    @Test
+    void futureCreatedIsClockSkew() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .created(Instant.now().getEpochSecond() + 300)
+                .build());
+
+        assertThatThrownBy(() -> SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, signed).build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("clock_skew"));
+    }
+
+    @Test
+    void expiresAndNonIntegerCreatedAreRejected() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .build());
+        String input = signed.get("Signature-Input");
+
+        Map<String, String> expired = new LinkedHashMap<>(signed);
+        expired.put("Signature-Input", input + ";expires=" + (Instant.now().getEpochSecond() - 1));
+        assertThat(SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, expired).build()))
+                .isFalse();
+
+        Map<String, String> quotedCreated = new LinkedHashMap<>(signed);
+        quotedCreated.put("Signature-Input", input.replaceFirst("created=(\\d+)", "created=\"$1\""));
+        assertThat(SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, quotedCreated).build()))
+                .isFalse();
+    }
+
+    @Test
+    void coveredContentDigestIsCheckedAgainstBody() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        byte[] body = "{\"amount\": 1}".getBytes(StandardCharsets.UTF_8);
+        Map<String, String> signed = sign(SignRequest.builder("POST", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .body(body)
+                .additionalComponents(List.of("content-digest"))
+                .build());
+
+        byte[] tampered = "{\"amount\": 9}".getBytes(StandardCharsets.UTF_8);
+        assertThat(SignatureVerifier.verify(
+                        verifyRequest("POST", TARGET, signed).body(tampered).build()))
+                .isFalse();
+        assertThat(SignatureVerifier.verify(
+                        verifyRequest("POST", TARGET, signed).build()))
+                .isFalse();
+    }
+
+    @Test
+    void signerRecomputesCallerSuppliedContentDigest() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        byte[] body = "{}".getBytes(StandardCharsets.UTF_8);
+        Map<String, String> signed = sign(SignRequest.builder("POST", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .headers(Map.of("Content-Digest", "sha-256=:bogus:"))
+                .body(body)
+                .additionalComponents(List.of("content-digest"))
+                .build());
+
+        assertThat(signed).containsEntry("Content-Digest", SignatureBase.contentDigest(body));
+        assertThatThrownBy(() -> sign(SignRequest.builder("GET", TARGET)
+                        .keyPair(keyPair)
+                        .additionalComponents(List.of("content-digest"))
+                        .build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .hasMessageContaining("content-digest requires body");
+    }
+
+    @Test
+    void keyidMustMatchTheSignatureKey() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .build());
+        String thumbprint = Jwk.thumbprint(Jwk.publicKeyToJwk(keyPair.getPublic(), null));
+
+        // keyid is part of the signed parameters, so a matching keyid requires re-signing; a
+        // mismatching one is rejected before signature verification.
+        Map<String, String> wrong = new LinkedHashMap<>(signed);
+        wrong.put("Signature-Input", signed.get("Signature-Input") + ";keyid=\"not-" + thumbprint + "\"");
+        assertThatThrownBy(() -> SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, wrong).build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("invalid_key"));
+
+        Map<String, String> right = new LinkedHashMap<>(signed);
+        right.put("Signature-Input", signed.get("Signature-Input") + ";keyid=\"" + thumbprint + "\"");
+        assertThat(SignatureVerifier.verify(verifyRequest("GET", TARGET, right).build()))
+                .isFalse();
+    }
+
+    @Test
+    void hwkKeyWithoutAlgIsUnsupported() {
+        KeyPair keyPair = KeyPairs.generateEd25519();
+        Map<String, String> signed = new LinkedHashMap<>(sign(SignRequest.builder("GET", TARGET)
+                .keyPair(keyPair)
+                .scheme(new SignatureScheme.Hwk())
+                .build()));
+        signed.put("Signature-Key", signed.get("Signature-Key").replaceAll(";alg=\"Ed25519\"", ""));
+
+        assertThatThrownBy(() -> SignatureVerifier.verify(
+                        verifyRequest("GET", TARGET, signed).build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("unsupported_algorithm"));
     }
 
     @Test
@@ -208,12 +360,13 @@ class SignVerifyRoundTripTest {
 
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "aa-auth+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "https://alice-as.uma.lab");
         payload.put("dwk", "aauth-server.json");
         payload.put("cnf", Map.of("jwk", Jwk.publicKeyToJwk(agentKeyPair.getPublic(), null)));
+        payload.put("iat", Instant.now().getEpochSecond());
         payload.put("exp", Instant.now().getEpochSecond() + 300);
         String authToken = Jwts.signEdDsa(header, payload, issuerKeyPair.getPrivate());
 
@@ -232,16 +385,20 @@ class SignVerifyRoundTripTest {
     }
 
     @Test
-    void jwtSchemeRejectsExpiredToken() {
+    void jwtSchemeRejectsExpiredTokenWithCode() {
         KeyPair issuerKeyPair = KeyPairs.generateEd25519();
         KeyPair agentKeyPair = KeyPairs.generateEd25519();
+        Map<String, Object> issuerJwks =
+                Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(issuerKeyPair.getPublic(), "auth-key-1")));
 
         Map<String, Object> header = new LinkedHashMap<>();
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("kid", "auth-key-1");
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "https://alice-as.uma.lab");
+        payload.put("dwk", "aauth-access.json");
         payload.put("cnf", Map.of("jwk", Jwk.publicKeyToJwk(agentKeyPair.getPublic(), null)));
+        payload.put("iat", Instant.now().getEpochSecond() - 600);
         payload.put("exp", Instant.now().getEpochSecond() - 10);
         String expiredToken = Jwts.signEdDsa(header, payload, issuerKeyPair.getPrivate());
 
@@ -250,10 +407,45 @@ class SignVerifyRoundTripTest {
                 .scheme(new SignatureScheme.Jwt(expiredToken))
                 .build());
 
-        assertThat(SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
+        assertThatThrownBy(() -> SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
+                        .jwksFetcher((id, dwk, kid) -> issuerJwks)
+                        .build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("expired_jwt"));
+    }
+
+    @Test
+    void jwtSchemeRequiresIssuerDwkAndJwks() {
+        KeyPair agentKeyPair = KeyPairs.generateEd25519();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("iss", "https://alice-as.uma.lab");
+        payload.put("cnf", Map.of("jwk", Jwk.publicKeyToJwk(agentKeyPair.getPublic(), null)));
+        String noDwk = Jwts.signEdDsa(Map.of("alg", "Ed25519", "kid", "k"), payload, agentKeyPair.getPrivate());
+        Map<String, String> signed = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(agentKeyPair)
+                .scheme(new SignatureScheme.Jwt(noDwk))
+                .build());
+
+        assertThatThrownBy(() -> SignatureVerifier.verify(verifyRequest("GET", TARGET, signed)
                         .jwksFetcher((id, dwk, kid) -> null)
                         .build()))
-                .isFalse();
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("invalid_jwt"));
+
+        payload.put("dwk", "aauth-access.json");
+        String withDwk = Jwts.signEdDsa(Map.of("alg", "Ed25519", "kid", "k"), payload, agentKeyPair.getPrivate());
+        Map<String, String> signedWithDwk = sign(SignRequest.builder("GET", TARGET)
+                .keyPair(agentKeyPair)
+                .scheme(new SignatureScheme.Jwt(withDwk))
+                .build());
+        assertThatThrownBy(() -> SignatureVerifier.verify(verifyRequest("GET", TARGET, signedWithDwk)
+                        .jwksFetcher((id, dwk, kid) -> null)
+                        .build()))
+                .isInstanceOf(HttpSignatureException.class)
+                .satisfies(e ->
+                        assertThat(((HttpSignatureException) e).errorCode()).isEqualTo("unknown_key"));
     }
 
     @Test
@@ -264,7 +456,7 @@ class SignVerifyRoundTripTest {
         Map<String, Object> enclaveJwk = Jwk.publicKeyToJwk(enclaveKeyPair.getPublic(), null);
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "jkt-s256+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("jwk", enclaveJwk);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "urn:jkt:sha-256:" + Jwk.thumbprint(enclaveJwk));
@@ -290,7 +482,7 @@ class SignVerifyRoundTripTest {
         Map<String, Object> enclaveJwk = Jwk.publicKeyToJwk(enclaveKeyPair.getPublic(), null);
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("typ", "jkt-s256+jwt");
-        header.put("alg", "EdDSA");
+        header.put("alg", "Ed25519");
         header.put("jwk", enclaveJwk);
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", "urn:jkt:sha-256:WRONG");

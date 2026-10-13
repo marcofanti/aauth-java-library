@@ -2,22 +2,26 @@ package io.github.marcofanti.aauth.signing;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.marcofanti.aauth.signing.keys.Jwk;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.security.Signature;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
 
 /**
  * Minimal compact JWT codec on JDK crypto.
  *
- * <p>AAuth tokens are plain compact JWTs (EdDSA-signed in practice; ES256/ES384/RS256 accepted on
- * verification). This codec avoids a JOSE library dependency: the JDK provides all required
- * signature algorithms natively on Java 17+.
+ * <p>AAuth tokens are plain compact JWTs signed with a fully-specified algorithm ({@code Ed25519},
+ * {@code ES256} or {@code ES384}). This codec avoids a JOSE library dependency: the JDK provides
+ * all required signature algorithms natively.
  */
 public final class Jwts {
 
@@ -93,7 +97,8 @@ public final class Jwts {
 
     /**
      * Verifies the signature of a parsed JWT against a public key, dispatching on the
-     * {@code alg} header (EdDSA, ES256, ES384, RS256).
+     * fully-specified {@code alg} header ({@code Ed25519}, {@code ES256}, {@code ES384}). The
+     * polymorphic {@code EdDSA} and every other algorithm are rejected (RFC 9864, AAuth draft-11).
      *
      * @return {@code true} when the signature is valid; {@code false} on any failure
      */
@@ -104,12 +109,9 @@ public final class Jwts {
         }
         String jdkAlgorithm =
                 switch (alg.toString()) {
-                    // "Ed25519" is the fully-specified identifier (RFC 9864, AAuth draft-10);
-                    // the polymorphic "EdDSA" is accepted as legacy during the transition.
-                    case "Ed25519", "EdDSA" -> "Ed25519";
+                    case "Ed25519" -> "Ed25519";
                     case "ES256" -> "SHA256withECDSAinP1363Format";
                     case "ES384" -> "SHA384withECDSAinP1363Format";
-                    case "RS256" -> "SHA256withRSA";
                     default -> null;
                 };
         if (jdkAlgorithm == null) {
@@ -123,5 +125,86 @@ public final class Jwts {
         } catch (GeneralSecurityException e) {
             return false;
         }
+    }
+
+    /**
+     * Verifies a JWT against its issuer's JWKS (mirrors the reference {@code verify_jwt}): the
+     * header {@code alg} must be fully specified, {@code kid} is required and must select exactly
+     * one key, then {@link #verifyEmbedded(String, Map)} applies.
+     *
+     * @return the verified payload
+     * @throws JoseException with the wire error code on any failure
+     */
+    public static Map<String, Object> verify(String token, Map<String, Object> jwks) {
+        Decoded jwt = parseOrThrow(token);
+        Object alg = jwt.header().get("alg");
+        if (!Jwk.isSupportedAlg(alg == null ? null : alg.toString())) {
+            throw new JoseException("Unsupported JWT algorithm: " + alg, JoseException.UNSUPPORTED_ALGORITHM);
+        }
+        if (!(jwt.header().get("kid") instanceof String kid) || kid.isEmpty()) {
+            throw new JoseException("JWT missing kid", JoseException.INVALID_JWT);
+        }
+        if (!(jwks.get("keys") instanceof List<?> keys)) {
+            throw new JoseException("Invalid JWKS", JoseException.UNKNOWN_KEY);
+        }
+        // Inspect only the selected key, so unrelated algorithms in the JWKS are allowed.
+        List<Map<String, Object>> matches = new ArrayList<>();
+        for (Object key : keys) {
+            if (key instanceof Map<?, ?> map && kid.equals(map.get("kid"))) {
+                matches.add(stringKeyed(map));
+            }
+        }
+        if (matches.size() != 1) {
+            throw new JoseException("Missing or ambiguous issuer key for kid " + kid, JoseException.UNKNOWN_KEY);
+        }
+        return verifyEmbedded(token, matches.get(0));
+    }
+
+    /**
+     * Verifies a JWT against a single JWK (mirrors the reference {@code verify_embedded_jwt}):
+     * the key must validate for the header {@code alg}, the signature must verify, {@code iat}
+     * and {@code exp} must be numbers with {@code exp > now} (no clock-skew tolerance) and
+     * {@code exp > iat}.
+     *
+     * @return the verified payload
+     * @throws JoseException with the wire error code on any failure
+     */
+    public static Map<String, Object> verifyEmbedded(String token, Map<String, Object> key) {
+        Decoded jwt = parseOrThrow(token);
+        Object alg = jwt.header().get("alg");
+        Jwk.validateAlgorithm(key, alg == null ? null : alg.toString());
+        if (!verifySignature(jwt, Jwk.toPublicKey(key))) {
+            throw new JoseException("JWT signature verification failed", JoseException.INVALID_JWT);
+        }
+        // JSON booleans decode to Boolean, never Number, so no separate boolean guard is needed.
+        if (!(jwt.payload().get("iat") instanceof Number iat)
+                || !(jwt.payload().get("exp") instanceof Number exp)
+                || !Double.isFinite(iat.doubleValue())
+                || !Double.isFinite(exp.doubleValue())) {
+            throw new JoseException("JWT missing or invalid iat/exp", JoseException.INVALID_JWT);
+        }
+        if (exp.doubleValue() <= System.currentTimeMillis() / 1000.0) {
+            throw new JoseException("Token has expired", JoseException.EXPIRED_JWT);
+        }
+        if (exp.doubleValue() <= iat.doubleValue()) {
+            throw new JoseException("Invalid token lifetime", JoseException.INVALID_JWT);
+        }
+        return jwt.payload();
+    }
+
+    private static Decoded parseOrThrow(String token) {
+        try {
+            return parse(token);
+        } catch (IllegalArgumentException e) {
+            throw new JoseException("Cannot decode JWT", JoseException.INVALID_JWT, e);
+        }
+    }
+
+    private static Map<String, Object> stringKeyed(Map<?, ?> map) {
+        Map<String, Object> result = new LinkedHashMap<>();
+        for (Map.Entry<?, ?> entry : map.entrySet()) {
+            result.put(String.valueOf(entry.getKey()), entry.getValue());
+        }
+        return result;
     }
 }

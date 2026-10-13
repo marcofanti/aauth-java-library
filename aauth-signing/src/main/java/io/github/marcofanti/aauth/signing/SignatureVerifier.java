@@ -12,21 +12,32 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
- * HTTP signature verification per RFC 9421 and draft-hardt-httpbis-signature-key.
+ * HTTP signature verification per RFC 9421 and draft-hardt-httpbis-signature-key (mirrors the
+ * reference {@code verify_signature}, AAuth draft-11).
  *
  * <p>Returns {@code false} for signatures that fail verification and throws
- * {@link HttpSignatureException} for structural problems (missing fetcher, unknown scheme,
- * malformed headers), mirroring the Python reference implementation.
+ * {@link HttpSignatureException} — carrying the {@code Signature-Error} code — for structural or
+ * policy failures: missing required components ({@code invalid_input}), a {@code created} in the
+ * future ({@code clock_skew}), invalid keys or tokens ({@code invalid_key},
+ * {@code unsupported_algorithm}, {@code invalid_jwt}, {@code expired_jwt}, {@code unknown_key}),
+ * a missing fetcher, or an unknown scheme.
  */
 public final class SignatureVerifier {
 
-    /** Maximum allowed skew for the {@code created} parameter, per AAuth spec (60 seconds). */
-    private static final long CREATED_WINDOW_SECONDS = 60;
+    /** {@code Signature-Error} code for a {@code created} timestamp ahead of the verifier's clock. */
+    public static final String ERROR_CLOCK_SKEW = "clock_skew";
+
+    /** {@code Signature-Error} code for missing required covered components. */
+    public static final String ERROR_INVALID_INPUT = "invalid_input";
+
+    private static final List<String> DEFAULT_REQUIRED = List.of("@method", "@authority", "@path", "signature-key");
 
     private static final Pattern LABEL_PREFIX = Pattern.compile("(\\w+)=");
 
@@ -36,30 +47,21 @@ public final class SignatureVerifier {
      * Verifies an HTTP message signature.
      *
      * @return {@code true} if the signature is valid, {@code false} otherwise
-     * @throws HttpSignatureException on invalid format or unusable configuration
+     * @throws HttpSignatureException on invalid format, policy violation or unusable configuration
      */
     public static boolean verify(VerifyRequest request) {
         try {
             SignatureInputHeader.Parsed input = SignatureInputHeader.parse(request.signatureInput());
-
-            String createdParam = input.params().get("created");
-            if (createdParam != null) {
-                long created = Long.parseLong(createdParam);
-                long now = request.clock().instant().getEpochSecond();
-                if (Math.abs(now - created) > CREATED_WINDOW_SECONDS) {
-                    return false;
-                }
+            requireComponents(request, input.components());
+            if (!timestampsAcceptable(request, input)) {
+                return false;
+            }
+            if (input.components().contains("content-digest") && !contentDigestMatches(request)) {
+                return false;
             }
 
             SignatureKeyHeader.Parsed signatureKey = SignatureKeyHeader.parse(request.signatureKey());
-
-            // Label consistency across all three headers (SIG-KEY §3.1).
-            String inputLabel = labelOf(request.signatureInput());
-            String signatureLabel = labelOf(request.signature());
-            if (inputLabel == null || signatureLabel == null) {
-                return false;
-            }
-            if (!inputLabel.equals(signatureLabel) || !inputLabel.equals(signatureKey.label())) {
+            if (!labelsConsistent(request, signatureKey)) {
                 return false;
             }
 
@@ -67,38 +69,120 @@ public final class SignatureVerifier {
             if (publicKey == null) {
                 return false;
             }
-
-            URI uri = URI.create(request.targetUri());
-            String authority = uri.getRawAuthority();
-            String path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
-            String query = uri.getRawQuery();
-
-            String prefix = signatureKey.label() + "=";
-            String signatureParams = request.signatureInput().startsWith(prefix)
-                    ? request.signatureInput().substring(prefix.length())
-                    : request.signatureInput();
-            if (signatureParams.isEmpty()) {
-                return false;
-            }
-
-            String signatureBase = SignatureBase.build(
-                    request.method(),
-                    authority,
-                    path,
-                    query,
-                    request.headers(),
-                    request.body(),
-                    request.signatureKey(),
-                    input.components(),
-                    signatureParams);
-
-            byte[] signatureBytes = SignatureHeader.parse(request.signature(), signatureKey.label());
-            return verifyWithKey(publicKey, signatureBytes, signatureBase.getBytes(StandardCharsets.UTF_8));
+            requireKeyIdMatches(input, signatureKey);
+            return verifyBase(request, input, signatureKey, publicKey);
         } catch (HttpSignatureException e) {
             throw e;
+        } catch (JoseException e) {
+            throw new HttpSignatureException(String.valueOf(e.getMessage()), e.errorCode(), null, e);
         } catch (RuntimeException e) {
             throw new HttpSignatureException("Signature verification failed: " + e.getMessage(), e);
         }
+    }
+
+    // --- Policy checks ---------------------------------------------------------------------
+
+    private static void requireComponents(VerifyRequest request, List<String> covered) {
+        List<String> configured = request.requiredComponents();
+        Set<String> required = new TreeSet<>(configured == null ? DEFAULT_REQUIRED : configured);
+        if (SignatureBase.getHeader(request.headers(), "authorization") != null) {
+            required.add("authorization");
+        }
+        if (!covered.containsAll(required)) {
+            throw new HttpSignatureException(
+                    "Missing required covered components",
+                    ERROR_INVALID_INPUT,
+                    Map.of("required_input", List.copyOf(required)),
+                    null);
+        }
+    }
+
+    /** {@code created} must be an integer within the window; a future one is {@code clock_skew}. */
+    private static boolean timestampsAcceptable(VerifyRequest request, SignatureInputHeader.Parsed input) {
+        Long created = input.integerParam("created");
+        if (created == null) {
+            return false;
+        }
+        long now = request.clock().instant().getEpochSecond();
+        if (created > now + request.signatureWindow()) {
+            throw new HttpSignatureException("Signature created is in the future", ERROR_CLOCK_SKEW, null, null);
+        }
+        if (created < now - request.signatureWindow()) {
+            return false;
+        }
+        if (input.params().containsKey("expires")) {
+            Long expires = input.integerParam("expires");
+            return expires != null && expires > now && expires >= created;
+        }
+        return true;
+    }
+
+    private static boolean contentDigestMatches(VerifyRequest request) {
+        String header = SignatureBase.getHeader(request.headers(), "content-digest");
+        byte[] body = request.body();
+        return header != null
+                && body != null
+                && SignatureBase.verifyContentDigest(header, body) == SignatureBase.DigestCheck.MATCH;
+    }
+
+    /** Label consistency across all three headers (SIG-KEY §3.1). */
+    private static boolean labelsConsistent(VerifyRequest request, SignatureKeyHeader.Parsed signatureKey) {
+        String inputLabel = labelOf(request.signatureInput());
+        String signatureLabel = labelOf(request.signature());
+        return inputLabel != null && inputLabel.equals(signatureLabel) && inputLabel.equals(signatureKey.label());
+    }
+
+    /** A {@code keyid} signature parameter must name the key the Signature-Key header carries. */
+    private static void requireKeyIdMatches(SignatureInputHeader.Parsed input, SignatureKeyHeader.Parsed signatureKey) {
+        if (!input.params().containsKey("keyid")) {
+            return;
+        }
+        Map<String, String> params = signatureKey.params();
+        Set<@Nullable String> candidates = new java.util.HashSet<>();
+        switch (signatureKey.scheme()) {
+            case "jwks_uri" -> candidates.add(params.get("kid"));
+            case "hwk" -> candidates.add(Jwk.thumbprint(hwkJwk(params)));
+            default -> {
+                Map<String, Object> confirmation = confirmationJwk(Jwts.parse(params.getOrDefault("jwt", "")));
+                if (confirmation != null) {
+                    Object kid = confirmation.get("kid");
+                    candidates.add(kid == null ? null : kid.toString());
+                    candidates.add(Jwk.thumbprint(confirmation));
+                }
+            }
+        }
+        if (!candidates.contains(input.stringParam("keyid"))) {
+            throw new HttpSignatureException(
+                    "keyid disagrees with Signature-Key", JoseException.INVALID_KEY, null, null);
+        }
+    }
+
+    private static boolean verifyBase(
+            VerifyRequest request,
+            SignatureInputHeader.Parsed input,
+            SignatureKeyHeader.Parsed signatureKey,
+            PublicKey publicKey) {
+        URI uri = URI.create(request.targetUri());
+        String path = uri.getRawPath() == null || uri.getRawPath().isEmpty() ? "/" : uri.getRawPath();
+        String prefix = signatureKey.label() + "=";
+        String signatureParams = request.signatureInput().startsWith(prefix)
+                ? request.signatureInput().substring(prefix.length())
+                : request.signatureInput();
+        if (signatureParams.isEmpty()) {
+            return false;
+        }
+        String signatureBase = SignatureBase.build(
+                request.method(),
+                uri.getRawAuthority(),
+                path,
+                uri.getRawQuery(),
+                request.headers(),
+                request.body(),
+                request.signatureKey(),
+                input.components(),
+                signatureParams);
+        byte[] signatureBytes = SignatureHeader.parse(request.signature(), signatureKey.label());
+        return verifyWithKey(publicKey, signatureBytes, signatureBase.getBytes(StandardCharsets.UTF_8));
     }
 
     // --- Scheme dispatch -------------------------------------------------------------------
@@ -106,26 +190,39 @@ public final class SignatureVerifier {
     private static @Nullable PublicKey resolvePublicKey(VerifyRequest request, SignatureKeyHeader.Parsed signatureKey) {
         Map<String, String> params = signatureKey.params();
         return switch (signatureKey.scheme()) {
-            case "hwk" -> request.publicKey() != null ? request.publicKey() : hwkKey(params);
+            case "hwk" -> hwkKey(request, params);
             case "jwks_uri" -> jwksUriKey(request, params);
-            case "jkt-jwt" -> jktJwtKey(params, request);
+            case "jkt-jwt" -> jktJwtKey(params);
             case "jwt" -> jwtKey(request, params);
             case "x509" -> throw new HttpSignatureException("scheme=x509 is not yet implemented");
             default -> throw new HttpSignatureException("Unknown signature scheme: " + signatureKey.scheme());
         };
     }
 
-    /** SIG-KEY §3.3: inline JWK parameters. */
-    private static PublicKey hwkKey(Map<String, String> params) {
+    /**
+     * SIG-KEY §3.3: inline JWK parameters, validated strictly. A caller-supplied key must have the
+     * same thumbprint as the inline one.
+     */
+    private static @Nullable PublicKey hwkKey(VerifyRequest request, Map<String, String> params) {
+        Map<String, Object> jwk = hwkJwk(params);
+        PublicKey discovered = Jwk.toPublicKey(jwk);
+        PublicKey expected = request.publicKey();
+        if (expected != null
+                && !Jwk.thumbprint(Jwk.publicKeyToJwk(expected, null)).equals(Jwk.thumbprint(jwk))) {
+            return null;
+        }
+        return discovered;
+    }
+
+    private static Map<String, Object> hwkJwk(Map<String, String> params) {
         Map<String, Object> jwk = new LinkedHashMap<>();
-        putIfPresent(jwk, params, "kty");
-        putIfPresent(jwk, params, "crv");
-        putIfPresent(jwk, params, "x");
-        putIfPresent(jwk, params, "y");
-        putIfPresent(jwk, params, "n");
-        putIfPresent(jwk, params, "e");
-        putIfPresent(jwk, params, "alg");
-        return Jwk.toPublicKey(jwk);
+        for (String name : List.of("kty", "crv", "x", "y", "n", "e", "alg")) {
+            String value = params.get(name);
+            if (value != null) {
+                jwk.put(name, value);
+            }
+        }
+        return jwk;
     }
 
     /** SIG-KEY §3.5: JWKS URI discovery via {@code {id}/.well-known/{dwk}}. */
@@ -139,77 +236,52 @@ public final class SignatureVerifier {
         String kid = requireParam(params, "kid", "jwks_uri");
 
         Map<String, Object> jwks = fetcher.fetch(id, dwk, kid);
-        if (jwks == null) {
+        if (jwks == null || jwks.isEmpty()) {
             return null;
         }
         Map<String, Object> signingKey = findKeyByKid(jwks, kid);
         return signingKey == null ? null : Jwk.toPublicKey(signingKey);
     }
 
-    /** SIG-KEY §3.4: self-issued key delegation from a hardware-backed enclave key. */
-    private static @Nullable PublicKey jktJwtKey(Map<String, String> params, VerifyRequest request) {
+    /**
+     * SIG-KEY §3.4: self-issued key delegation from an enclave key carried in the JWT header. Any
+     * failure yields {@code null} (an unverifiable signature), as in the reference.
+     */
+    private static @Nullable PublicKey jktJwtKey(Map<String, String> params) {
         String token = params.get("jwt");
         if (token == null || token.isEmpty()) {
             return null;
         }
-        Jwts.Decoded jwt;
         try {
-            jwt = Jwts.parse(token);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-
-        Object typ = jwt.header().get("typ");
-        @Nullable
-        String hashAlgorithm =
-                switch (typ == null ? "" : typ.toString()) {
-                    case "jkt-s256+jwt" -> "SHA-256";
-                    case "jkt-s512+jwt" -> "SHA-512";
-                    default -> null;
-                };
-        if (hashAlgorithm == null) {
-            return null;
-        }
-        String hashName = "SHA-256".equals(hashAlgorithm) ? "sha-256" : "sha-512";
-
-        Object headerJwk = jwt.header().get("jwk");
-        if (!(headerJwk instanceof Map<?, ?> headerJwkMap)) {
-            return null;
-        }
-        Map<String, Object> enclaveJwk = castJwk(headerJwkMap);
-
-        String expectedIss;
-        try {
-            expectedIss = "urn:jkt:" + hashName + ":" + Jwk.thumbprint(enclaveJwk, hashAlgorithm);
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-        if (!expectedIss.equals(jwt.claim("iss"))) {
-            return null;
-        }
-
-        try {
-            PublicKey enclaveKey = Jwk.toPublicKey(enclaveJwk);
-            if (!Jwts.verifySignature(jwt, enclaveKey)) {
+            Jwts.Decoded jwt = Jwts.parse(token);
+            Object typ = jwt.header().get("typ");
+            String hashAlgorithm =
+                    switch (typ == null ? "" : typ.toString()) {
+                        case "jkt-s256+jwt" -> "SHA-256";
+                        case "jkt-s512+jwt" -> "SHA-512";
+                        default -> null;
+                    };
+            if (hashAlgorithm == null || !(jwt.header().get("jwk") instanceof Map<?, ?> headerJwkMap)) {
                 return null;
             }
-        } catch (IllegalArgumentException e) {
+            Map<String, Object> enclaveJwk = castJwk(headerJwkMap);
+            String hashName = "SHA-256".equals(hashAlgorithm) ? "sha-256" : "sha-512";
+            if (!("urn:jkt:" + hashName + ":" + Jwk.thumbprint(enclaveJwk, hashAlgorithm)).equals(jwt.claim("iss"))) {
+                return null;
+            }
+            Map<String, Object> payload = Jwts.verifyEmbedded(token, enclaveJwk);
+            Map<String, Object> confirmation = confirmationJwk(payload);
+            return confirmation == null ? null : Jwk.toPublicKey(confirmation);
+        } catch (JoseException | IllegalArgumentException e) {
             return null;
         }
-
-        Long exp = jwt.numericClaim("exp");
-        long now = request.clock().instant().getEpochSecond();
-        if (exp != null && now >= exp) {
-            return null;
-        }
-        if (jwt.numericClaim("iat") == null) {
-            return null;
-        }
-
-        return confirmationKey(jwt);
     }
 
-    /** SIG-KEY §3.6: JWT confirmation key. Token-type validation belongs to the protocol layer. */
+    /**
+     * SIG-KEY §3.6: JWT confirmation key. The token is verified strictly against its issuer's
+     * JWKS ({@code iss}, {@code dwk}, header {@code kid}); failures surface their error code.
+     * AAuth token-type validation belongs to the protocol layer.
+     */
     private static @Nullable PublicKey jwtKey(VerifyRequest request, Map<String, String> params) {
         JwksFetcher fetcher = request.jwksFetcher();
         if (fetcher == null) {
@@ -223,59 +295,32 @@ public final class SignatureVerifier {
         try {
             jwt = Jwts.parse(token);
         } catch (IllegalArgumentException e) {
-            return null;
+            throw new JoseException("Cannot decode JWT", JoseException.INVALID_JWT, e);
         }
-
-        Long exp = jwt.numericClaim("exp");
-        long now = request.clock().instant().getEpochSecond();
-        if (exp != null && now >= exp) {
-            return null;
-        }
-
-        Object cnf = jwt.payload().get("cnf");
-        if (!(cnf instanceof Map<?, ?> cnfMap) || !(cnfMap.get("jwk") instanceof Map)) {
-            return null;
-        }
-
         String iss = jwt.claim("iss");
-        if (iss == null) {
-            return null;
-        }
         String dwk = jwt.claim("dwk");
-        Object kidHeader = jwt.header().get("kid");
-        if (kidHeader == null) {
-            return null;
+        if (iss == null || iss.isEmpty() || dwk == null || dwk.isEmpty()) {
+            throw new JoseException("JWT missing issuer or dwk", JoseException.INVALID_JWT);
         }
-
-        Map<String, Object> jwks = fetcher.fetch(iss, dwk, kidHeader.toString());
-        if (jwks == null) {
-            return null;
+        Object kid = jwt.header().get("kid");
+        Map<String, Object> jwks = fetcher.fetch(iss, dwk, kid == null ? null : kid.toString());
+        if (jwks == null || jwks.isEmpty()) {
+            throw new JoseException("Issuer JWKS unavailable", JoseException.UNKNOWN_KEY);
         }
-        Map<String, Object> signingKey = findKeyByKid(jwks, kidHeader.toString());
-        if (signingKey == null) {
-            return null;
+        Map<String, Object> confirmation = confirmationJwk(Jwts.verify(token, jwks));
+        if (confirmation == null) {
+            throw new JoseException("JWT missing cnf.jwk", JoseException.INVALID_JWT);
         }
-
-        try {
-            PublicKey issuerKey = Jwk.toPublicKey(signingKey);
-            if (!Jwts.verifySignature(jwt, issuerKey)) {
-                return null;
-            }
-        } catch (IllegalArgumentException e) {
-            return null;
-        }
-
-        return confirmationKey(jwt);
+        return Jwk.toPublicKey(confirmation);
     }
 
-    private static @Nullable PublicKey confirmationKey(Jwts.Decoded jwt) {
-        Object cnf = jwt.payload().get("cnf");
-        if (cnf instanceof Map<?, ?> cnfMap && cnfMap.get("jwk") instanceof Map<?, ?> jwkMap) {
-            try {
-                return Jwk.toPublicKey(castJwk(jwkMap));
-            } catch (IllegalArgumentException e) {
-                return null;
-            }
+    private static @Nullable Map<String, Object> confirmationJwk(Jwts.Decoded jwt) {
+        return confirmationJwk(jwt.payload());
+    }
+
+    private static @Nullable Map<String, Object> confirmationJwk(Map<String, Object> payload) {
+        if (payload.get("cnf") instanceof Map<?, ?> cnf && cnf.get("jwk") instanceof Map<?, ?> jwk) {
+            return castJwk(jwk);
         }
         return null;
     }
@@ -376,13 +421,6 @@ public final class SignatureVerifier {
             jwk.put(entry.getKey().toString(), entry.getValue());
         }
         return jwk;
-    }
-
-    private static void putIfPresent(Map<String, Object> jwk, Map<String, String> params, String name) {
-        String value = params.get(name);
-        if (value != null) {
-            jwk.put(name, value);
-        }
     }
 
     private static String requireParam(Map<String, String> params, String name, String scheme) {
