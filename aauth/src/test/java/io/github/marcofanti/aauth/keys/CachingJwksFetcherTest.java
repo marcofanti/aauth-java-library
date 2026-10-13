@@ -10,6 +10,11 @@ import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
@@ -178,6 +183,41 @@ class CachingJwksFetcherTest {
         assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json")).hasMessage("outage");
         assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json")).hasMessageContaining("Rate limited");
         assertThat(fetches).hasValue(1);
+    }
+
+    @Test
+    void concurrentColdCacheCallersShareTheInFlightFetch() throws Exception {
+        FakeClock clock = new FakeClock();
+        AtomicInteger fetches = new AtomicInteger();
+        CountDownLatch fetchStarted = new CountDownLatch(1);
+        CountDownLatch releaseFetch = new CountDownLatch(1);
+        JsonHttpClient server = url -> {
+            if (url.equals(METADATA_URL)) {
+                return METADATA;
+            }
+            fetches.incrementAndGet();
+            fetchStarted.countDown();
+            try {
+                releaseFetch.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            return jwksWithKid("key-1");
+        };
+        CachingJwksFetcher fetcher = new CachingJwksFetcher(server, new JwksCache(3600, 86400, clock), 60, clock);
+        ExecutorService pool = Executors.newFixedThreadPool(2);
+        try {
+            Future<Map<String, Object>> first = pool.submit(() -> fetcher.fetch(AGENT, "key-1", "aauth-agent.json"));
+            assertThat(fetchStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            Future<Map<String, Object>> second = pool.submit(() -> fetcher.fetch(AGENT, "key-1", "aauth-agent.json"));
+            Thread.sleep(100); // let the second caller reach the in-flight fetch
+            releaseFetch.countDown();
+
+            assertThat(first.get(5, TimeUnit.SECONDS)).isEqualTo(second.get(5, TimeUnit.SECONDS));
+            assertThat(fetches).hasValue(1);
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     @Test

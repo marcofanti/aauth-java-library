@@ -19,7 +19,8 @@ import org.jspecify.annotations.Nullable;
  *       {@link Metadata#validate} ({@code issuer} must equal the identifier, HTTPS
  *       {@code jwks_uri}), fetch the JWKS
  *   <li>re-fetch on unknown {@code kid} to support key rotation
- *   <li>MUST NOT fetch more than once per minute per issuer; failed fetches count
+ *   <li>MUST NOT fetch more than once per minute per issuer; failed fetches count, and
+ *       concurrent callers share one in-flight fetch per issuer
  *   <li>cache entries expire after at most 24 hours
  * </ul>
  */
@@ -30,6 +31,7 @@ public final class CachingJwksFetcher {
     private final long minFetchIntervalSeconds;
     private final Clock clock;
     private final ConcurrentHashMap<String, Long> lastFetchTimes = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Object> fetchLocks = new ConcurrentHashMap<>();
 
     /**
      * Creates a fetcher with the JDK HTTP client (pinned to HTTP/1.1 for h11-server
@@ -66,37 +68,50 @@ public final class CachingJwksFetcher {
         }
         String jwksUri = String.valueOf(metadata.get("jwks_uri"));
 
-        Map<String, Object> cached = cache.get(jwksUri);
-        if (cached != null) {
-            if (kid == null) {
-                return cached;
+        Map<String, Object> usable = usableCached(identifier, jwksUri, kid);
+        if (usable != null) {
+            return usable;
+        }
+        // Single flight per identifier: a caller arriving while a fetch is in flight waits for it
+        // and then re-checks the cache, instead of tripping the rate limit on a cold cache.
+        synchronized (fetchLocks.computeIfAbsent(identifier, key -> new Object())) {
+            usable = usableCached(identifier, jwksUri, kid);
+            if (usable != null) {
+                return usable;
             }
-            if (getKeyByKid(cached, kid) != null) {
-                return cached;
-            }
-            // Unknown kid — re-fetch if the rate limit allows, otherwise serve the stale copy.
             if (!canFetch(identifier)) {
-                return cached;
+                throw new JwksException(
+                        "Rate limited: cannot fetch JWKS for " + identifier + " more than once per "
+                                + minFetchIntervalSeconds + "s",
+                        jwksUri,
+                        null);
             }
-            cache.invalidate(jwksUri);
+            // Failed fetches count too, so an outage cannot bypass the rate limit.
+            lastFetchTimes.put(identifier, clock.instant().getEpochSecond());
+            Map<String, Object> jwks = httpClient.fetchJson(jwksUri);
+            if (!(jwks.get("keys") instanceof List)) {
+                throw new JwksException("Invalid JWKS structure from " + jwksUri, jwksUri, null);
+            }
+            cache.set(jwksUri, jwks);
+            return jwks;
         }
+    }
 
-        if (!canFetch(identifier)) {
-            throw new JwksException(
-                    "Rate limited: cannot fetch JWKS for " + identifier + " more than once per "
-                            + minFetchIntervalSeconds + "s",
-                    jwksUri,
-                    null);
+    /**
+     * Returns the cached JWKS when it can be served: it holds {@code kid} (or no kid was asked
+     * for), or the rate limit forbids a re-fetch for an unknown kid (stale copy). Otherwise drops
+     * the entry so the caller re-fetches, and returns {@code null}.
+     */
+    private @Nullable Map<String, Object> usableCached(String identifier, String jwksUri, @Nullable String kid) {
+        Map<String, Object> cached = cache.get(jwksUri);
+        if (cached == null) {
+            return null;
         }
-
-        // Failed fetches count too, so an outage cannot bypass the rate limit.
-        lastFetchTimes.put(identifier, clock.instant().getEpochSecond());
-        Map<String, Object> jwks = httpClient.fetchJson(jwksUri);
-        if (!(jwks.get("keys") instanceof List)) {
-            throw new JwksException("Invalid JWKS structure from " + jwksUri, jwksUri, null);
+        if (kid == null || getKeyByKid(cached, kid) != null || !canFetch(identifier)) {
+            return cached;
         }
-        cache.set(jwksUri, jwks);
-        return jwks;
+        cache.invalidate(jwksUri);
+        return null;
     }
 
     /** Finds a key in a JWKS by {@code kid}; returns {@code null} when absent. */
