@@ -154,7 +154,10 @@ tests (rewritten against the 0.5.0 API).
 - [x] Revocation body/sign/send, `RevocationStore`, `RevocationManager` (cascade, `handle_request`).
 - [x] Missions: approval build/parse, `missionRequest`, `tokenNeedsRefresh`.
 
-### D4 — resource role (resource/verifier.py, challenge_builder.py, token_issuer.py)
+### D4 — resource role (resource/verifier.py, challenge_builder.py, token_issuer.py) — DONE
+- [x] `RequestVerifier`: jwt scheme only (`unsupported_scheme`), trusted AS/PS issuers, token verified with the
+  resource as audience, revocation, required scopes (`insufficient_scope`), bound session tokens.
+- [x] `ChallengeBuilder` / `ResourceTokenIssuer` (landed with D2).
 ### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py)
 ### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py
 ### D7 — interop + docs
