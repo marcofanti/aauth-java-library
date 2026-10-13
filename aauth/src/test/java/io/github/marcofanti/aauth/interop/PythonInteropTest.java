@@ -319,11 +319,11 @@ class PythonInteropTest {
         Map<String, Object> resourceJwks =
                 Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-1")));
 
-        String resourceToken = ResourceTokens.create(
-                ResourceTokens.Spec.builder(RESOURCE, PS, Jwk.thumbprint(agentJwk), resourceKeys.getPrivate(), "r-1")
-                        .presentedToken(person, fetcherFor(Map.of(PS, map(issued.get("jwks")))))
-                        .scope("data.read")
-                        .build());
+        String resourceToken = ResourceTokens.create(ResourceTokens.Spec.builder(
+                        RESOURCE, PS, Jwk.thumbprint(agentJwk), resourceKeys.getPrivate(), "r-1")
+                .presentedToken(person, fetcherFor(Map.of(PS, map(issued.get("jwks")))))
+                .scope("data.read")
+                .build());
 
         Map<String, Object> out = python(
                 """
