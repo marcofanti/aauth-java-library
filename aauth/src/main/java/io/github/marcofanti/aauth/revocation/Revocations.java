@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.marcofanti.aauth.Identifiers;
 import io.github.marcofanti.aauth.TokenException;
 import io.github.marcofanti.aauth.agent.Poller;
+import io.github.marcofanti.aauth.http.Egress;
 import io.github.marcofanti.aauth.signing.RequestSigner;
 import io.github.marcofanti.aauth.signing.SignRequest;
 import io.github.marcofanti.aauth.signing.SignatureScheme;
@@ -102,7 +103,8 @@ public final class Revocations {
      * polled under the same server identity. Never throws.
      *
      * @param endpoint the recipient's {@code revocation_endpoint}, or {@code null} when it has none
-     * @param httpClient HTTP client, or {@code null} for an HTTP/1.1 default
+     * @param httpClient HTTP client, or {@code null} for an HTTP/1.1 default that admits only
+     *     public HTTPS URLs ({@link Egress#admitPublicUrl}), including the polling URL
      * @param sleeper poll sleep implementation, or {@code null} for real sleeping
      */
     public static Map<String, Object> send(
@@ -115,14 +117,13 @@ public final class Revocations {
         if (endpoint == null || endpoint.isEmpty()) {
             return Map.of("error", REVOCATION_UNSUPPORTED);
         }
-        HttpClient client = httpClient != null ? httpClient : defaultClient();
+        Outbound client = httpClient != null ? new Outbound(httpClient, false) : new Outbound(defaultClient(), true);
         try {
             SignedRequest request = signRequest(endpoint, jti, exp, signer);
-            HttpResponse<String> response = client.send(
-                    withHeaders(HttpRequest.newBuilder(URI.create(endpoint)), request.headers())
+            HttpResponse<String> response =
+                    client.send(withHeaders(HttpRequest.newBuilder(URI.create(endpoint)), request.headers())
                             .POST(HttpRequest.BodyPublishers.ofByteArray(request.body()))
-                            .build(),
-                    HttpResponse.BodyHandlers.ofString());
+                            .build());
             if (response.statusCode() == 202) {
                 return pollOutcome(endpoint, response, signer, client, sleeper);
             }
@@ -139,7 +140,7 @@ public final class Revocations {
             String endpoint,
             HttpResponse<String> accepted,
             Signer signer,
-            HttpClient client,
+            Outbound client,
             Poller.@Nullable Sleeper sleeper) {
         String location = accepted.headers().firstValue("location").orElse(null);
         if (location == null) {
@@ -151,11 +152,10 @@ public final class Revocations {
                             .keyPair(signer.keyPair())
                             .scheme(new SignatureScheme.JwksUri(signer.issuer(), signer.dwk(), signer.kid()))
                             .build());
-                    HttpResponse<String> polled = client.send(
-                            withHeaders(HttpRequest.newBuilder(URI.create(url)), headers)
+                    HttpResponse<String> polled =
+                            client.send(withHeaders(HttpRequest.newBuilder(URI.create(url)), headers)
                                     .GET()
-                                    .build(),
-                            HttpResponse.BodyHandlers.ofString());
+                                    .build());
                     return new Poller.PollResponse(
                             polled.statusCode(),
                             parse(polled.body()),
@@ -241,6 +241,16 @@ public final class Revocations {
         builder.timeout(Duration.ofSeconds(30));
         headers.forEach(builder::header);
         return builder;
+    }
+
+    /** An HTTP client plus whether the library's egress admission applies to it. */
+    private record Outbound(HttpClient client, boolean admit) {
+        HttpResponse<String> send(HttpRequest request) throws IOException, InterruptedException {
+            if (admit) {
+                Egress.admitPublicUrl(request.uri().toString());
+            }
+            return client.send(request, HttpResponse.BodyHandlers.ofString());
+        }
     }
 
     private static HttpClient defaultClient() {

@@ -7,6 +7,7 @@ import com.sun.net.httpserver.HttpServer;
 import io.github.marcofanti.aauth.JwksException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import org.junit.jupiter.api.AfterAll;
@@ -49,26 +50,45 @@ class DefaultHttpClientTest {
 
     @Test
     void fetchesAndParsesJson() {
-        Map<String, Object> json = new DefaultHttpClient().fetchJson(baseUrl + "/jwks.json");
+        Map<String, Object> json = injected().fetchJson(baseUrl + "/jwks.json");
         assertThat(json).containsKey("keys");
     }
 
     @Test
     void non2xxStatusRaisesJwksException() {
-        assertThatThrownBy(() -> new DefaultHttpClient().fetchJson(baseUrl + "/missing"))
+        assertThatThrownBy(() -> injected().fetchJson(baseUrl + "/missing"))
                 .isInstanceOf(JwksException.class)
                 .hasMessageContaining("HTTP 404");
     }
 
     @Test
     void malformedJsonRaisesJwksException() {
-        assertThatThrownBy(() -> new DefaultHttpClient().fetchJson(baseUrl + "/garbage"))
-                .isInstanceOf(JwksException.class);
+        assertThatThrownBy(() -> injected().fetchJson(baseUrl + "/garbage")).isInstanceOf(JwksException.class);
     }
 
     @Test
     void connectionFailureRaisesJwksException() {
-        assertThatThrownBy(() -> new DefaultHttpClient().fetchJson("http://grafana.uma.lab:1/nope"))
+        assertThatThrownBy(() -> injected().fetchJson("http://127.0.0.1:1/nope"))
                 .isInstanceOf(JwksException.class);
+    }
+
+    @Test
+    void defaultClientAdmitsOnlyPublicHttpsUrls() {
+        for (String url : java.util.List.of(
+                baseUrl + "/jwks.json",
+                "https://127.0.0.1/jwks.json",
+                "https://localhost/jwks.json",
+                "https://user@example.com/jwks.json",
+                "https://example.com/jwks.json#frag")) {
+            assertThatThrownBy(() -> new DefaultHttpClient().fetchJson(url))
+                    .as(url)
+                    .isInstanceOf(JwksException.class)
+                    .hasMessageStartingWith("Network ");
+        }
+    }
+
+    private static DefaultHttpClient injected() {
+        return new DefaultHttpClient(
+                HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build());
     }
 }

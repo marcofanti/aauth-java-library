@@ -14,16 +14,15 @@ class MetadataTest {
     @Test
     void buildsAgentMetadataWithOptionalFields() {
         Map<String, Object> metadata = Metadata.agent("https://portal.uma.lab", "https://portal.uma.lab/jwks.json")
-                .with("client_name", "My Agent")
-                .with("clarification_supported", true)
+                .with("name", "My Agent")
+                .with("callback_endpoint", "https://portal.uma.lab/callback")
                 .with("tos_uri", null)
                 .build();
 
         assertThat(metadata)
                 .containsEntry("issuer", "https://portal.uma.lab")
                 .containsEntry("jwks_uri", "https://portal.uma.lab/jwks.json")
-                .containsEntry("client_name", "My Agent")
-                .containsEntry("clarification_supported", true)
+                .containsEntry("name", "My Agent")
                 .doesNotContainKey("tos_uri");
         assertThat(metadata.keySet().iterator().next()).isEqualTo("issuer");
     }
@@ -42,20 +41,24 @@ class MetadataTest {
     }
 
     @Test
+    void resourceJwksUriIsOptional() {
+        assertThat(Metadata.resource("https://grafana.uma.lab", null).build()).containsOnlyKeys("issuer");
+    }
+
+    @Test
     void buildsAuthServerMetadataWithRequiredEndpoints() {
         Map<String, Object> metadata = Metadata.authServer(
                         "https://alice-as.uma.lab",
                         "https://alice-as.uma.lab/jwks.json",
-                        "https://alice-as.uma.lab/token",
-                        "https://alice-as.uma.lab/interact")
+                        "https://alice-as.uma.lab/token")
                 .with("revocation_endpoint", "https://alice-as.uma.lab/revoke")
                 .build();
 
         assertThat(metadata)
                 .containsEntry("issuer", "https://alice-as.uma.lab")
-                .containsEntry("token_endpoint", "https://alice-as.uma.lab/token")
-                .containsEntry("interaction_endpoint", "https://alice-as.uma.lab/interact")
-                .containsEntry("revocation_endpoint", "https://alice-as.uma.lab/revoke");
+                .containsEntry("auth_token_endpoint", "https://alice-as.uma.lab/token")
+                .containsEntry("revocation_endpoint", "https://alice-as.uma.lab/revoke")
+                .doesNotContainKeys("token_endpoint", "interaction_endpoint");
     }
 
     @Test
@@ -76,33 +79,57 @@ class MetadataTest {
     }
 
     @Test
-    void requiredFieldsAreEnforced() {
-        assertThatThrownBy(() -> Metadata.agent(null, "https://x/jwks.json"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("issuer");
-        assertThatThrownBy(() ->
-                        Metadata.authServer("https://keycloak.uma.lab", "https://a/jwks.json", null, "https://a/i"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("token_endpoint");
+    void generatorsValidateTheirOutput() {
+        assertThatThrownBy(() -> Metadata.agent("http://portal.uma.lab", "https://portal.uma.lab/jwks.json")
+                        .build())
+                .isInstanceOf(MetadataException.class);
+        assertThatThrownBy(() -> Metadata.agent("https://portal.uma.lab", "http://portal.uma.lab/jwks.json")
+                        .build())
+                .hasMessageContaining("JWKS URI must be HTTPS");
+        assertThatThrownBy(() -> Metadata.authServer(
+                                "https://as.uma.lab", "https://as.uma.lab/jwks", "http://as.uma.lab/token")
+                        .build())
+                .isInstanceOf(MetadataException.class);
     }
 
     @Test
-    void fetchRejectsNonHttpsExceptLocalhost() {
-        assertThatThrownBy(() -> Metadata.fetch("http://gateway.uma.lab/.well-known/aauth-resource.json", url -> {
-                    throw new AssertionError("should not fetch");
-                }))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("HTTPS");
+    void fetchValidatesAgainstTheIssuerInTheUrl() {
+        Map<String, Object> document = Metadata.agent("https://portal.uma.lab", "https://portal.uma.lab/jwks")
+                .build();
+        assertThat(Metadata.fetch("https://portal.uma.lab/.well-known/aauth-agent.json", url -> document))
+                .isEqualTo(document);
+        assertThatThrownBy(() -> Metadata.fetch("https://other.uma.lab/.well-known/aauth-agent.json", url -> document))
+                .extracting(e -> ((MetadataException) e).errorCode())
+                .isEqualTo("issuer_mismatch");
+    }
 
-        // Localhost HTTP is allowed for development.
-        Map<String, Object> fetched =
-                Metadata.fetch("http://localhost:8080/.well-known/aauth-agent.json", url -> Map.of("issuer", "x"));
-        assertThat(fetched).containsEntry("issuer", "x");
+    @Test
+    void fetchRejectsBadUrlsBeforeFetching() {
+        for (String url : List.of(
+                "http://gateway.uma.lab/.well-known/aauth-resource.json",
+                "http://localhost:8080/.well-known/aauth-agent.json",
+                "https://gateway.uma.lab/meta.json",
+                "https://gateway.uma.lab/.well-known/a/b.json",
+                "https://gateway.uma.lab/.well-known/")) {
+            assertThatThrownBy(() -> Metadata.fetch(url, u -> {
+                        throw new AssertionError("should not fetch");
+                    }))
+                    .as(url)
+                    .isInstanceOf(MetadataException.class);
+        }
+    }
+
+    @Test
+    void fetchAuthServerRequiresAuthTokenEndpoint() {
+        Map<String, Object> document = Map.of("issuer", "https://as.uma.lab", "jwks_uri", "https://as.uma.lab/jwks");
+        assertThatThrownBy(() ->
+                        Metadata.fetchAuthServer("https://as.uma.lab/.well-known/aauth-access.json", url -> document))
+                .hasMessageContaining("missing auth_token_endpoint");
     }
 
     @Test
     void fetchWrapsClientFailures() {
-        assertThatThrownBy(() -> Metadata.fetch("https://grafana.uma.lab/meta.json", url -> {
+        assertThatThrownBy(() -> Metadata.fetch("https://grafana.uma.lab/.well-known/aauth-resource.json", url -> {
                     throw new JwksException("boom");
                 }))
                 .isInstanceOf(MetadataException.class)

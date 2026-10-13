@@ -1,6 +1,8 @@
 package io.github.marcofanti.aauth.keys;
 
 import io.github.marcofanti.aauth.JwksException;
+import io.github.marcofanti.aauth.MetadataException;
+import io.github.marcofanti.aauth.metadata.Metadata;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -13,10 +15,11 @@ import org.jspecify.annotations.Nullable;
  * <p>Per spec §JWKS Discovery:
  *
  * <ul>
- *   <li>two-step discovery: fetch {@code {id}/.well-known/{dwk}}, extract {@code jwks_uri},
- *       fetch the JWKS
+ *   <li>two-step discovery: fetch {@code {id}/.well-known/{dwk}}, validate it with
+ *       {@link Metadata#validate} ({@code issuer} must equal the identifier, HTTPS
+ *       {@code jwks_uri}), fetch the JWKS
  *   <li>re-fetch on unknown {@code kid} to support key rotation
- *   <li>MUST NOT fetch more than once per minute per issuer
+ *   <li>MUST NOT fetch more than once per minute per issuer; failed fetches count
  *   <li>cache entries expire after at most 24 hours
  * </ul>
  */
@@ -54,12 +57,14 @@ public final class CachingJwksFetcher {
      */
     public Map<String, Object> fetch(String identifier, String kid, String metadataPath) {
         String metadataUrl = identifier + "/.well-known/" + metadataPath;
-        Map<String, Object> metadata = httpClient.fetchJson(metadataUrl);
-        Object jwksUriValue = metadata.get("jwks_uri");
-        if (jwksUriValue == null || jwksUriValue.toString().isEmpty()) {
-            throw new JwksException("No jwks_uri in metadata from " + metadataUrl, metadataUrl, null);
+        Map<String, Object> metadata;
+        try {
+            metadata = Metadata.validate(httpClient.fetchJson(metadataUrl), identifier, List.of("jwks_uri"));
+        } catch (MetadataException e) {
+            throw new JwksException(
+                    "Failed to fetch metadata from " + metadataUrl + ": " + e.getMessage(), metadataUrl, e);
         }
-        String jwksUri = jwksUriValue.toString();
+        String jwksUri = String.valueOf(metadata.get("jwks_uri"));
 
         Map<String, Object> cached = cache.get(jwksUri);
         if (cached != null) {
@@ -84,12 +89,13 @@ public final class CachingJwksFetcher {
                     null);
         }
 
+        // Failed fetches count too, so an outage cannot bypass the rate limit.
+        lastFetchTimes.put(identifier, clock.instant().getEpochSecond());
         Map<String, Object> jwks = httpClient.fetchJson(jwksUri);
         if (!(jwks.get("keys") instanceof List)) {
             throw new JwksException("Invalid JWKS structure from " + jwksUri, jwksUri, null);
         }
         cache.set(jwksUri, jwks);
-        lastFetchTimes.put(identifier, clock.instant().getEpochSecond());
         return jwks;
     }
 

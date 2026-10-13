@@ -97,7 +97,7 @@ public final class ErrorCodes {
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("error", error);
         if (description != null && !description.isEmpty()) {
-            response.put("error_description", description);
+            response.put("detail", description);
         }
         if (extras != null) {
             response.putAll(extras);

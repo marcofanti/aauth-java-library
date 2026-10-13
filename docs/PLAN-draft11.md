@@ -163,7 +163,17 @@ tests (rewritten against the 0.5.0 API).
   verified; strict PS discovery; injectable `HttpTransport`.
 - [x] `Poller`: reference state machine (initial response, same-origin Location, interaction/clarification).
 - [x] `ChallengeHandler` (credential requirements only) and `AgentRequestSigner` (jwt profile, recipient roles).
-### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py
+### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py — DONE
+- [x] Public `StructuredFields` (RFC 8941 dictionaries) in `aauth-signing`; `SignatureInputHeader` uses it.
+- [x] `AAuthHeaders`: strict SF `AAuth-Requirement` parsing (token `requirement`), token68
+  `Authorization: AAuth` and `buildAAuthAccessHeader`, agent-token/person-token protocol levels.
+- [x] `Metadata`: generators validate their output; `name`; `authServer(id, jwks_uri, auth_token_endpoint)`;
+  optional resource `jwks_uri`; `fetch`/`fetchAuthServer` validate against `issuerFromMetadataUrl`
+  (no localhost carve-out).
+- [x] `Egress.admitPublicUrl` on the library's default clients (`DefaultHttpClient()`,
+  `HttpTransport.defaultTransport()`, `Revocations` default); default clients do not follow redirects.
+- [x] `CachingJwksFetcher` validates discovery metadata; failed fetches count toward the rate limit.
+- [x] Deferred: claims header is `requirement=claims`; error bodies use `detail`.
 ### D7 — interop + docs
 - [x] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override (9 two-way tests, done with D2).
 - [ ] PROGRESS decision log; README; DEMO integration contract (HTTPS identifiers).

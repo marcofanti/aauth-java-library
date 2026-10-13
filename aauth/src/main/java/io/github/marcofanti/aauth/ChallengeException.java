@@ -9,7 +9,12 @@ public class ChallengeException extends AAuthException {
     private final @Nullable String challengeType;
 
     public ChallengeException(String message) {
-        this(message, null);
+        this(message, (String) null);
+    }
+
+    public ChallengeException(String message, Throwable cause) {
+        super(message, cause);
+        this.challengeType = null;
     }
 
     public ChallengeException(String message, @Nullable String challengeType) {

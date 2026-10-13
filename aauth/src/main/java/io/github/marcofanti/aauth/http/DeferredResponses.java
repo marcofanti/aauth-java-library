@@ -200,17 +200,9 @@ public final class DeferredResponses {
         } else if ("clarification".equals(require)) {
             // Spec §Clarification Chat: the 202 carrying a question MUST signal it in the header.
             headers.put(AAuthHeaders.HEADER_AAUTH_REQUIREMENT, AAuthHeaders.buildClarificationRequirement());
-        } else if ("claims".equals(require)
-                && spec.requiredClaims() != null
-                && !spec.requiredClaims().isEmpty()) {
-            StringBuilder inner = new StringBuilder();
-            for (int i = 0; i < spec.requiredClaims().size(); i++) {
-                if (i > 0) {
-                    inner.append(' ');
-                }
-                inner.append('"').append(spec.requiredClaims().get(i)).append('"');
-            }
-            headers.put(AAuthHeaders.HEADER_AAUTH_REQUIREMENT, "requirement=claims; required_claims=(" + inner + ")");
+        } else if ("claims".equals(require)) {
+            // The body carries required_claims; the header only signals the requirement.
+            headers.put(AAuthHeaders.HEADER_AAUTH_REQUIREMENT, AAuthHeaders.buildClaimsRequirement());
         }
         return headers;
     }
@@ -228,7 +220,7 @@ public final class DeferredResponses {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("error", error);
         if (description != null && !description.isEmpty()) {
-            body.put("error_description", description);
+            body.put("detail", description);
         }
         return body;
     }

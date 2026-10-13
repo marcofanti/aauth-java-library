@@ -43,6 +43,8 @@ class CachingJwksFetcherTest {
     private static final String METADATA_URL = AGENT + "/.well-known/aauth-agent.json";
     private static final String JWKS_URL = AGENT + "/jwks.json";
 
+    private static final Map<String, Object> METADATA = Map.of("issuer", AGENT, "jwks_uri", JWKS_URL);
+
     private static Map<String, Object> jwksWithKid(String kid) {
         return Map.of("keys", List.of(Map.of("kty", "OKP", "crv", "Ed25519", "x", "abc", "kid", kid)));
     }
@@ -50,7 +52,7 @@ class CachingJwksFetcherTest {
     private static JsonHttpClient fakeServer(Map<String, Object> jwks, AtomicInteger jwksFetches) {
         return url -> {
             if (url.equals(METADATA_URL)) {
-                return Map.of("jwks_uri", JWKS_URL);
+                return METADATA;
             }
             if (url.equals(JWKS_URL)) {
                 jwksFetches.incrementAndGet();
@@ -95,7 +97,7 @@ class CachingJwksFetcherTest {
         Map<String, Object> rotatingJwks = new HashMap<>(jwksWithKid("old-key"));
         JsonHttpClient server = url -> {
             if (url.equals(METADATA_URL)) {
-                return Map.of("jwks_uri", JWKS_URL);
+                return METADATA;
             }
             fetches.incrementAndGet();
             return Map.copyOf(rotatingJwks);
@@ -141,12 +143,41 @@ class CachingJwksFetcherTest {
     @Test
     void rejectsInvalidJwksStructure() {
         FakeClock clock = new FakeClock();
-        JsonHttpClient server = url -> url.equals(METADATA_URL) ? Map.of("jwks_uri", JWKS_URL) : Map.of("nope", 1);
+        JsonHttpClient server = url -> url.equals(METADATA_URL) ? METADATA : Map.of("nope", 1);
         CachingJwksFetcher fetcher = new CachingJwksFetcher(server, new JwksCache(3600, 86400, clock), 60, clock);
 
         assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json"))
                 .isInstanceOf(JwksException.class)
                 .hasMessageContaining("Invalid JWKS structure");
+    }
+
+    @Test
+    void rejectsMetadataForAnotherIssuer() {
+        FakeClock clock = new FakeClock();
+        JsonHttpClient server = url -> Map.of("issuer", "https://evil.uma.lab", "jwks_uri", JWKS_URL);
+        CachingJwksFetcher fetcher = new CachingJwksFetcher(server, new JwksCache(3600, 86400, clock), 60, clock);
+
+        assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json"))
+                .isInstanceOf(JwksException.class)
+                .hasMessageContaining("issuer mismatch");
+    }
+
+    @Test
+    void failedJwksFetchCountsTowardTheRateLimit() {
+        FakeClock clock = new FakeClock();
+        AtomicInteger fetches = new AtomicInteger();
+        JsonHttpClient server = url -> {
+            if (url.equals(METADATA_URL)) {
+                return METADATA;
+            }
+            fetches.incrementAndGet();
+            throw new JwksException("outage");
+        };
+        CachingJwksFetcher fetcher = new CachingJwksFetcher(server, new JwksCache(3600, 86400, clock), 60, clock);
+
+        assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json")).hasMessage("outage");
+        assertThatThrownBy(() -> fetcher.fetch(AGENT, null, "aauth-agent.json")).hasMessageContaining("Rate limited");
+        assertThat(fetches).hasValue(1);
     }
 
     @Test

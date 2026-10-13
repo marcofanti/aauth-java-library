@@ -15,6 +15,7 @@ import io.github.marcofanti.aauth.signing.keys.KeyPairs;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
 import java.time.Instant;
@@ -29,6 +30,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 /** Revocation state, cascades and the signed endpoint (mirrors the reference test_draft11_governance). */
 class RevocationTest {
+
+    /** Tests talk to loopback servers, so they inject a client (the default one refuses loopback). */
+    private static final HttpClient LOOPBACK =
+            HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build();
 
     private static final String RESOURCE = "https://gateway.uma.lab";
     private static final String PS = "https://ps.uma.lab";
@@ -284,7 +289,7 @@ class RevocationTest {
         try {
             String base = withServer(server);
             Map<String, Object> outcome =
-                    Revocations.send(base + "/revoke", "jti", now + 600, psSigner, null, seconds -> {});
+                    Revocations.send(base + "/revoke", "jti", now + 600, psSigner, LOOPBACK, seconds -> {});
 
             assertThat(outcome).isEmpty();
             assertThat(calls).containsExactly("POST jwks_uri " + PS, "GET jwks_uri " + PS);
@@ -318,19 +323,22 @@ class RevocationTest {
                         Map.of()));
         try {
             String base = withServer(server);
-            assertThat(Revocations.send(base + "/unsupported", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send(base + "/unsupported", "j", now + 600, psSigner, LOOPBACK, null))
                     .containsEntry("error", Revocations.REVOCATION_UNSUPPORTED);
-            assertThat(Revocations.send(base + "/broken", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send(base + "/broken", "j", now + 600, psSigner, LOOPBACK, null))
                     .containsEntry("error", Revocations.REVOCATION_UNAVAILABLE);
-            assertThat(Revocations.send(base + "/text", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send(base + "/text", "j", now + 600, psSigner, LOOPBACK, null))
                     .containsEntry("error", Revocations.REVOCATION_UNAVAILABLE);
-            assertThat(Revocations.send(base + "/report", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send(base + "/report", "j", now + 600, psSigner, LOOPBACK, null))
                     .containsKey("downstream");
-            assertThat(Revocations.send(base + "/bad-report", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send(base + "/bad-report", "j", now + 600, psSigner, LOOPBACK, null))
                     .containsEntry("error", Revocations.REVOCATION_UNAVAILABLE);
             assertThat(Revocations.send(null, "j", now + 600, psSigner, null, null))
                     .containsEntry("error", Revocations.REVOCATION_UNSUPPORTED);
-            assertThat(Revocations.send("http://127.0.0.1:1/closed", "j", now + 600, psSigner, null, null))
+            assertThat(Revocations.send("http://127.0.0.1:1/closed", "j", now + 600, psSigner, LOOPBACK, null))
+                    .containsEntry("error", Revocations.REVOCATION_UNAVAILABLE);
+            // The library's default client admits only public HTTPS URLs, so it never reaches a loopback server.
+            assertThat(Revocations.send(base + "/unsupported", "j", now + 600, psSigner, null, null))
                     .containsEntry("error", Revocations.REVOCATION_UNAVAILABLE);
         } finally {
             server.stop(0);

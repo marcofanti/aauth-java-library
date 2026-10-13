@@ -31,13 +31,17 @@ public interface HttpTransport {
 
     /**
      * A transport over a JDK {@link HttpClient}, pinned to HTTP/1.1 with 30-second timeouts (the JDK's
-     * h2c upgrade breaks h11-based servers such as uvicorn).
+     * h2c upgrade breaks h11-based servers such as uvicorn). Every request URL must pass
+     * {@link Egress#admitPublicUrl}; inject {@link #jdk(HttpClient)} to apply your own policy.
      */
     static HttpTransport defaultTransport() {
-        return jdk(defaultHttpClient());
+        return Egress.admitted(jdk(defaultHttpClient()));
     }
 
-    /** The library's default JDK client: HTTP/1.1 with a 30-second connect timeout. */
+    /**
+     * The library's default JDK client: HTTP/1.1 with a 30-second connect timeout. It does not
+     * follow redirects, so a redirect cannot bypass egress admission.
+     */
     static HttpClient defaultHttpClient() {
         return HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
