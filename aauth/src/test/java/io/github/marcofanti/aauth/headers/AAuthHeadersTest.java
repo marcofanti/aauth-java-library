@@ -33,20 +33,28 @@ class AAuthHeadersTest {
     }
 
     @Test
-    void parsesSignatureRequirementWithAllParameters() {
+    void parsesSignatureRequirementAsStructuredDictionary() {
         AAuthHeaders.ParsedChallenge parsed = AAuthHeaders.parseSignatureRequirement(
-                "requirement=identity, algorithms=(\"EdDSA\"), required_input=(\"@query\" \"content-digest\")");
+                "requirement=identity, algorithms=(\"ES256\"), required_input=(\"@query\")");
 
         assertThat(parsed.requirement()).isEqualTo("identity");
-        assertThat(parsed.algorithms()).containsExactly("EdDSA");
-        assertThat(parsed.requiredInput()).containsExactly("@query", "content-digest");
+        assertThat(parsed.algorithms()).isNull();
+        assertThat(parsed.requiredInput()).isNull();
     }
 
     @Test
-    void parseSignatureRequirementRejectsMissingRequirement() {
-        assertThatThrownBy(() -> AAuthHeaders.parseSignatureRequirement("foo=bar"))
-                .isInstanceOf(ChallengeException.class)
-                .hasMessageContaining("requirement");
+    void parseSignatureRequirementRejectsNonDictionaryValues() {
+        for (String invalid : List.of(
+                "foo=bar",
+                "requirement=\"auth-token\"",
+                "requirement=auth-token; resource-token=\"unterminated",
+                "requirement=auth-token,",
+                "Requirement=approval")) {
+            assertThatThrownBy(() -> AAuthHeaders.parseSignatureRequirement(invalid))
+                    .as(invalid)
+                    .isInstanceOf(ChallengeException.class)
+                    .hasMessage("Invalid AAuth-Requirement structured dictionary");
+        }
     }
 
     @Test
@@ -178,26 +186,47 @@ class AAuthHeadersTest {
     }
 
     @Test
-    void authorizationAAuthHeaderExtractsToken() {
+    void authorizationAAuthHeaderExtractsToken68() {
         assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("AAuth opaque-token-123"))
                 .isEqualTo("opaque-token-123");
-        assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("aauth  token ")).isEqualTo("token");
+        assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("aauth abc/+~.def=="))
+                .isEqualTo("abc/+~.def==");
         assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("Bearer x")).isNull();
-        assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("AAuth ")).isNull();
+        assertThat(AAuthHeaders.parseAuthorizationAAuthHeader("")).isNull();
         assertThat(AAuthHeaders.parseAuthorizationAAuthHeader(null)).isNull();
     }
 
     @Test
-    void missionHeaderRoundTripsAndAcceptsLegacyManager() {
-        String header = AAuthHeaders.buildMissionHeader("https://ps.uma.lab", "abc123");
-        assertThat(header).isEqualTo("approver=\"https://ps.uma.lab\"; s256=\"abc123\"");
+    void authorizationAAuthHeaderRejectsMalformedCredentials() {
+        assertThatThrownBy(() -> AAuthHeaders.parseAuthorizationAAuthHeader("AAuth"))
+                .isInstanceOf(ChallengeException.class)
+                .hasMessage("Missing session credential");
+        for (String invalid : List.of("AAuth ", "aauth  token", "AAuth a b", "AAuth to=ken", "AAuth tök")) {
+            assertThatThrownBy(() -> AAuthHeaders.parseAuthorizationAAuthHeader(invalid))
+                    .as(invalid)
+                    .isInstanceOf(ChallengeException.class)
+                    .hasMessageContaining("token68");
+        }
+    }
 
-        AAuthHeaders.Mission mission = AAuthHeaders.parseMissionHeader(header);
-        assertThat(mission.approver()).isEqualTo("https://ps.uma.lab");
-        assertThat(mission.s256()).isEqualTo("abc123");
+    @Test
+    void accessHeaderRequiresToken68() {
+        assertThat(AAuthHeaders.buildAAuthAccessHeader("session-123")).isEqualTo("session-123");
+        assertThatThrownBy(() -> AAuthHeaders.buildAAuthAccessHeader("two tokens"))
+                .isInstanceOf(ChallengeException.class);
+    }
 
-        assertThat(AAuthHeaders.parseMissionHeader("manager=\"https://grafana.uma.lab\"; s256=\"x\"")
-                        .approver())
-                .isEqualTo("https://grafana.uma.lab");
+    @Test
+    void protocolLevelsIncludeDraft11TokenRequirements() {
+        assertThat(AAuthHeaders.aauthProtocolRequirementLevels())
+                .contains(AAuthHeaders.REQUIRE_AGENT_TOKEN, AAuthHeaders.REQUIRE_PERSON_TOKEN);
+    }
+
+    @Test
+    void personTokenRequirementHasNoParameters() {
+        assertThat(AAuthHeaders.buildPersonTokenRequirement()).isEqualTo("requirement=person-token");
+        assertThat(AAuthHeaders.parseSignatureRequirement("requirement=person-token")
+                        .requirement())
+                .isEqualTo(AAuthHeaders.REQUIRE_PERSON_TOKEN);
     }
 }

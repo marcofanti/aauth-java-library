@@ -59,7 +59,7 @@ class SignatureBaseTest {
     }
 
     @Test
-    void coversAauthMissionHeader() {
+    void coversArbitraryHeaderComponents() {
         String base = SignatureBase.build(
                 "POST",
                 "example.com",
@@ -154,15 +154,76 @@ class SignatureBaseTest {
 
     @Test
     void determinesDefaultCoveredComponents() {
-        assertThat(SignatureBase.determineCoveredComponents(null, null, null, false))
+        assertThat(SignatureBase.determineCoveredComponents(null, null, null))
                 .containsExactly("@method", "@authority", "@path", "signature-key");
     }
 
     @Test
-    void includesQueryAndAdditionalComponentsAndMission() {
-        assertThat(SignatureBase.determineCoveredComponents("a=1", new byte[] {1}, List.of("content-digest"), true))
-                .containsExactly(
-                        "@method", "@authority", "@path", "@query", "content-digest", "signature-key", "aauth-mission");
+    void includesQueryAndAdditionalComponentsBeforeSignatureKey() {
+        assertThat(SignatureBase.determineCoveredComponents("a=1", new byte[] {1}, List.of("content-digest")))
+                .containsExactly("@method", "@authority", "@path", "@query", "content-digest", "signature-key");
+    }
+
+    @Test
+    void coversAuthorizationHeader() {
+        String base = SignatureBase.build(
+                "GET",
+                "example.com",
+                "/",
+                null,
+                Map.of("Authorization", "AAuth opaque"),
+                null,
+                SIGNATURE_KEY_HEADER,
+                List.of("@method", "authorization", "signature-key"),
+                "(\"@method\" \"authorization\" \"signature-key\");created=1");
+
+        assertThat(base).contains("\"authorization\": AAuth opaque");
+        assertThatThrownBy(() -> SignatureBase.build(
+                        "GET",
+                        "example.com",
+                        "/",
+                        null,
+                        Map.of(),
+                        null,
+                        SIGNATURE_KEY_HEADER,
+                        List.of("authorization"),
+                        "(\"authorization\");created=1"))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("authorization");
+    }
+
+    @Test
+    void emptyBodyIsStillABody() {
+        String base = SignatureBase.build(
+                "POST",
+                "example.com",
+                "/",
+                null,
+                Map.of("Content-Type", "application/json"),
+                new byte[0],
+                SIGNATURE_KEY_HEADER,
+                List.of("content-type"),
+                "(\"content-type\");created=1");
+
+        assertThat(base).contains("\"content-type\": application/json");
+    }
+
+    @Test
+    void rejectsUnknownDerivedOrMissingHeaderComponents() {
+        for (String component : List.of("@unknown", "x-missing")) {
+            assertThatThrownBy(() -> SignatureBase.build(
+                            "GET",
+                            "example.com",
+                            "/",
+                            null,
+                            Map.of(),
+                            null,
+                            SIGNATURE_KEY_HEADER,
+                            List.of(component),
+                            "(\"" + component + "\");created=1"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining(component);
+        }
     }
 
     @Test

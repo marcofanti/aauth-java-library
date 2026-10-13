@@ -16,7 +16,7 @@ class CoreTypesTest {
 
         assertThat(body)
                 .containsEntry("error", "invalid_resource_token")
-                .containsEntry("error_description", "resource token expired")
+                .containsEntry("detail", "resource token expired")
                 .containsEntry("retry", true);
     }
 

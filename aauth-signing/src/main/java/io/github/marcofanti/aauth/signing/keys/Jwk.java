@@ -1,5 +1,6 @@
 package io.github.marcofanti.aauth.signing.keys;
 
+import io.github.marcofanti.aauth.signing.JoseException;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.security.AlgorithmParameters;
@@ -16,7 +17,6 @@ import java.security.spec.ECPublicKeySpec;
 import java.security.spec.EdECPoint;
 import java.security.spec.EdECPublicKeySpec;
 import java.security.spec.NamedParameterSpec;
-import java.security.spec.RSAPublicKeySpec;
 import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -51,7 +51,7 @@ public final class Jwk {
             jwk.put("kty", "OKP");
             jwk.put("crv", "Ed25519");
             jwk.put("x", B64URL.encodeToString(ed25519ToRaw(edKey)));
-            // AAuth draft-10 / RFC 9864: every JWK MUST carry a fully-specified alg.
+            // RFC 9864: every JWK MUST carry a fully-specified alg.
             jwk.put("alg", "Ed25519");
         } else if (publicKey instanceof ECPublicKey ecKey) {
             int fieldBytes = (ecKey.getParams().getCurve().getField().getFieldSize() + 7) / 8;
@@ -79,68 +79,64 @@ public final class Jwk {
         return java.util.Collections.unmodifiableMap(jwk);
     }
 
-    /** JOSE alg identifiers this library accepts, mapped to the (kty, crv) they require. */
+    /**
+     * Fully-specified JOSE algorithms (RFC 9864) accepted by AAuth draft-11, mapped to the
+     * {@code kty/crv} they require. {@code EdDSA}, {@code none}, symmetric and RSA algorithms are
+     * not accepted.
+     */
     private static final Map<String, String> ALG_TO_KEY_SHAPE = Map.of(
             "Ed25519", "OKP/Ed25519",
             "ES256", "EC/P-256",
-            "ES384", "EC/P-384",
-            "RS256", "RSA/");
+            "ES384", "EC/P-384");
 
-    /**
-     * Validates a JWK's {@code alg} member per AAuth draft-10 §12.8.1 / RFC 9864.
-     *
-     * <p>Transition tolerance: an absent {@code alg} is currently allowed, and the legacy
-     * polymorphic {@code EdDSA} is accepted on an Ed25519 key — pre-draft-10 peers
-     * (including the Python reference) emit it in JWKS, and token-header verification
-     * already applies the same policy. Any other present {@code alg} MUST be a supported
-     * fully-specified identifier ({@code none} and symmetric algorithms are rejected) and
-     * MUST agree with the key's {@code kty}/{@code crv}. Both tolerances flip to strict
-     * once the ecosystem is on draft-10.
-     *
-     * @throws IllegalArgumentException if the alg is forbidden, unsupported, or inconsistent
-     */
-    public static void requireConsistentAlg(Map<String, Object> jwk) {
-        String alg = str(jwk, "alg");
-        if (alg == null) {
-            return;
-        }
-        if ("EdDSA".equals(alg)) {
-            if ("OKP".equals(str(jwk, "kty")) && "Ed25519".equals(str(jwk, "crv"))) {
-                return;
-            }
-            throw new IllegalArgumentException(
-                    "JWK alg EdDSA requires an OKP/Ed25519 key, got " + str(jwk, "kty") + "/" + str(jwk, "crv"));
-        }
-        String shape = ALG_TO_KEY_SHAPE.get(alg);
-        if (shape == null) {
-            throw new IllegalArgumentException("Forbidden or unsupported JWK alg: " + alg);
-        }
-        String kty = str(jwk, "kty");
-        String crv = str(jwk, "crv");
-        String actual = (kty == null ? "" : kty) + "/" + (crv == null ? "" : crv);
-        if (!shape.equals(actual)) {
-            throw new IllegalArgumentException(
-                    "JWK alg " + alg + " disagrees with key type " + actual + " (expected " + shape + ")");
-        }
+    /** Returns whether {@code alg} is a fully-specified algorithm accepted by AAuth draft-11. */
+    public static boolean isSupportedAlg(@Nullable String alg) {
+        return alg != null && ALG_TO_KEY_SHAPE.containsKey(alg);
     }
 
     /**
-     * Converts a JWK to a {@link PublicKey} (Ed25519, EC P-256/P-384, or RSA).
+     * Validates a JWK per AAuth draft-11 / RFC 9864 (mirrors the reference
+     * {@code validate_algorithm}): {@code alg} is REQUIRED and must be fully specified, must agree
+     * with {@code kty}/{@code crv} (and with {@code expectedAlg} when given), and the key material
+     * must convert to a public key.
      *
-     * <p>When the JWK carries an {@code alg} member it is validated first — see
-     * {@link #requireConsistentAlg(Map)}.
+     * @param expectedAlg the JWT header {@code alg} the key must match, or {@code null}
+     * @return the validated {@code alg}
+     * @throws JoseException {@code unsupported_algorithm} when {@code alg} is missing or not
+     *     supported; {@code invalid_key} on a key-shape, expected-alg or key-material mismatch
+     */
+    public static String validateAlgorithm(Map<String, Object> jwk, @Nullable String expectedAlg) {
+        String alg = str(jwk, "alg");
+        if (alg == null || !ALG_TO_KEY_SHAPE.containsKey(alg)) {
+            throw new JoseException(
+                    "Missing or unsupported fully-specified alg: " + alg, JoseException.UNSUPPORTED_ALGORITHM);
+        }
+        String actual = str(jwk, "kty") + "/" + str(jwk, "crv");
+        if (!ALG_TO_KEY_SHAPE.get(alg).equals(actual) || (expectedAlg != null && !alg.equals(expectedAlg))) {
+            throw new JoseException(
+                    "Key type, curve, or algorithm mismatch: alg " + alg + " on " + actual
+                            + (expectedAlg == null ? "" : " (expected " + expectedAlg + ")"),
+                    JoseException.INVALID_KEY);
+        }
+        convert(jwk);
+        return alg;
+    }
+
+    /**
+     * Converts a JWK to a {@link PublicKey} (Ed25519 or EC P-256/P-384), validating it first with
+     * {@link #validateAlgorithm(Map, String)}.
      *
-     * @throws IllegalArgumentException if the JWK uses an unsupported key type, curve or alg
+     * @throws JoseException if the JWK fails validation or its key material is invalid
      */
     public static PublicKey toPublicKey(Map<String, Object> jwk) {
-        requireConsistentAlg(jwk);
+        validateAlgorithm(jwk, null);
+        return convert(jwk);
+    }
+
+    private static PublicKey convert(Map<String, Object> jwk) {
         String kty = str(jwk, "kty");
         try {
-            if ("OKP".equals(kty)) {
-                String crv = str(jwk, "crv");
-                if (!"Ed25519".equals(crv)) {
-                    throw new IllegalArgumentException("Unsupported OKP curve: " + crv);
-                }
+            if ("OKP".equals(kty) && "Ed25519".equals(str(jwk, "crv"))) {
                 return ed25519FromRaw(B64URL_DECODER.decode(requiredStr(jwk, "x")));
             }
             if ("EC".equals(kty)) {
@@ -158,15 +154,10 @@ public final class Jwk {
                 ECParameterSpec spec = params.getParameterSpec(ECParameterSpec.class);
                 return KeyFactory.getInstance("EC").generatePublic(new ECPublicKeySpec(new ECPoint(x, y), spec));
             }
-            if ("RSA".equals(kty)) {
-                BigInteger n = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "n")));
-                BigInteger e = new BigInteger(1, B64URL_DECODER.decode(requiredStr(jwk, "e")));
-                return KeyFactory.getInstance("RSA").generatePublic(new RSAPublicKeySpec(n, e));
-            }
-        } catch (GeneralSecurityException e) {
-            throw new IllegalArgumentException("Failed to convert JWK to public key: " + e.getMessage(), e);
+        } catch (GeneralSecurityException | IllegalArgumentException e) {
+            throw new JoseException("Invalid public key material: " + e.getMessage(), JoseException.INVALID_KEY, e);
         }
-        throw new IllegalArgumentException("Unsupported JWK kty: " + kty);
+        throw new JoseException("Unsupported JWK kty/crv: " + kty + "/" + str(jwk, "crv"), JoseException.INVALID_KEY);
     }
 
     /**

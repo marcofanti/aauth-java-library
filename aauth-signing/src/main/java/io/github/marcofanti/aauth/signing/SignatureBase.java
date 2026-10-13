@@ -59,15 +59,10 @@ public final class SignatureBase {
                         case "content-type" -> requireBodyHeader(headers, body, "content-type");
                         case "content-digest" -> requireBodyHeader(headers, body, "content-digest");
                         case "signature-key" -> signatureKeyHeader;
-                        case "aauth-mission" -> {
-                            String mission = getHeader(headers, "aauth-mission");
-                            if (mission == null) {
-                                throw new IllegalArgumentException(
-                                        "aauth-mission in Signature-Input but AAuth-Mission header missing");
-                            }
-                            yield mission;
-                        }
-                        default -> throw new IllegalArgumentException("Unknown component: " + component);
+                        case "authorization" ->
+                            requireNonEmptyHeader(
+                                    headers, "authorization", "authorization component required but header missing");
+                        default -> genericHeader(headers, component);
                     };
             base.append('"')
                     .append(component.toLowerCase(java.util.Locale.ROOT))
@@ -86,20 +81,15 @@ public final class SignatureBase {
      *
      * <p>Per AAuth spec §15.3 the signature MUST cover {@code @method}, {@code @authority},
      * {@code @path} and {@code signature-key}; {@code @query} is added when a query string is
-     * present, and {@code aauth-mission} is appended after {@code signature-key} on authorization
-     * requests that carry the {@code AAuth-Mission} header.
+     * present, and caller-selected components go before {@code signature-key}.
      *
      * @param query query string, or {@code null}
      * @param body request body, or {@code null} (reserved: body presence does not add components
      *     by itself; body coverage is opt-in via {@code additionalComponents})
-     * @param additionalComponents extra components required by the resource, or {@code null}
-     * @param includeAauthMission whether to append {@code aauth-mission}
+     * @param additionalComponents extra components required by the recipient, or {@code null}
      */
     public static List<String> determineCoveredComponents(
-            @Nullable String query,
-            byte @Nullable [] body,
-            @Nullable List<String> additionalComponents,
-            boolean includeAauthMission) {
+            @Nullable String query, byte @Nullable [] body, @Nullable List<String> additionalComponents) {
         List<String> components = new ArrayList<>(List.of("@method", "@authority", "@path"));
         if (query != null && !query.isEmpty()) {
             components.add("@query");
@@ -108,9 +98,6 @@ public final class SignatureBase {
             components.addAll(additionalComponents);
         }
         components.add("signature-key");
-        if (includeAauthMission) {
-            components.add("aauth-mission");
-        }
         return List.copyOf(components);
     }
 
@@ -180,13 +167,27 @@ public final class SignatureBase {
         return sawSupported ? DigestCheck.MATCH : DigestCheck.NO_SUPPORTED_ALGORITHM;
     }
 
+    /** Body-coverage components: an empty body is still a body (only {@code null} means none). */
     private static String requireBodyHeader(Map<String, String> headers, byte @Nullable [] body, String name) {
-        if (body == null || body.length == 0) {
+        if (body == null) {
             throw new IllegalArgumentException(name + " component specified but no body present");
         }
+        return requireNonEmptyHeader(headers, name, name + " component required but header missing");
+    }
+
+    private static String requireNonEmptyHeader(Map<String, String> headers, String name, String message) {
         String value = getHeader(headers, name);
+        if (value == null || value.isEmpty()) {
+            throw new IllegalArgumentException(message);
+        }
+        return value;
+    }
+
+    /** Any other covered component must be a header present on the request (never a derived {@code @}). */
+    private static String genericHeader(Map<String, String> headers, String component) {
+        String value = component.startsWith("@") ? null : getHeader(headers, component);
         if (value == null) {
-            throw new IllegalArgumentException(name + " component required but header missing");
+            throw new IllegalArgumentException("Unknown or missing component: " + component);
         }
         return value;
     }

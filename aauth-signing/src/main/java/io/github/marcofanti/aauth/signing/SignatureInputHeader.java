@@ -1,31 +1,44 @@
 package io.github.marcofanti.aauth.signing;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
-/** {@code Signature-Input} header building and parsing (RFC 9421 §4.1). */
+/**
+ * {@code Signature-Input} header building and parsing (RFC 9421 §4.1).
+ *
+ * <p>Parsing follows the RFC 8941 Dictionary grammar strictly, mirroring the reference's use of
+ * {@code http_sfv}: exactly one signature label, an inner list of quoted component identifiers with
+ * no duplicates, and typed parameters.
+ */
 public final class SignatureInputHeader {
-
-    private static final Pattern HEADER_PATTERN = Pattern.compile("(\\w+)=\\((.*)\\)(?:;(.*))?");
-    private static final Pattern COMPONENT_PATTERN = Pattern.compile("\"([^\"]+)\"");
-    private static final Pattern PARAM_PATTERN = Pattern.compile("(\\w+)=([^\\s;]+)");
 
     private SignatureInputHeader() {}
 
     /**
-     * Parsed {@code Signature-Input} header: covered component identifiers and the
-     * post-component parameters (e.g. {@code created}).
+     * Parsed {@code Signature-Input} header: the signature label, covered component identifiers,
+     * and the inner-list parameters with RFC 8941 types ({@link Long} integers, {@link BigDecimal}
+     * decimals, {@link String} strings/tokens/byte sequences, {@link Boolean} booleans).
      */
-    public record Parsed(List<String> components, Map<String, String> params) {
+    public record Parsed(String label, List<String> components, Map<String, Object> params) {
         public Parsed {
             components = List.copyOf(components);
-            params = Map.copyOf(params);
+            params = java.util.Collections.unmodifiableMap(new LinkedHashMap<>(params));
+        }
+
+        /** Returns an integer parameter (e.g. {@code created}), or {@code null} if absent or not an integer. */
+        public @Nullable Long integerParam(String name) {
+            return params.get(name) instanceof Long value ? value : null;
+        }
+
+        /** Returns a string-valued parameter (e.g. {@code keyid}), or {@code null} if absent or not a string. */
+        public @Nullable String stringParam(String name) {
+            return params.get(name) instanceof String value ? value : null;
         }
     }
 
@@ -58,36 +71,35 @@ public final class SignatureInputHeader {
     /**
      * Parses a {@code Signature-Input} header value.
      *
-     * @throws IllegalArgumentException if the header format is invalid
+     * @throws IllegalArgumentException if the value is not a single-label RFC 8941 dictionary whose
+     *     member is an inner list of distinct strings
      */
     public static Parsed parse(String headerValue) {
-        Matcher matcher = HEADER_PATTERN.matcher(headerValue);
-        if (!matcher.lookingAt()) {
-            throw new IllegalArgumentException("Invalid Signature-Input format: " + headerValue);
+        Map<String, StructuredFields.Item> members = StructuredFields.parseDictionary(headerValue);
+        if (members.size() != 1) {
+            throw new IllegalArgumentException("Exactly one signature label is supported");
         }
-
-        String componentsPart = matcher.group(2);
-        String paramsPart = matcher.group(3) == null ? "" : matcher.group(3);
-
+        Map.Entry<String, StructuredFields.Item> member =
+                members.entrySet().iterator().next();
+        if (!(member.getValue().value() instanceof List<?> items)) {
+            throw new IllegalArgumentException("Signature-Input member must be an inner list");
+        }
         List<String> components = new ArrayList<>();
-        Matcher componentMatcher = COMPONENT_PATTERN.matcher(componentsPart);
-        while (componentMatcher.find()) {
-            components.add(componentMatcher.group(1));
+        for (Object item : items) {
+            if (!(item instanceof StructuredFields.Item component && component.value() instanceof String name)) {
+                throw new IllegalArgumentException("Covered components must be strings");
+            }
+            components.add(name);
         }
-
-        Map<String, String> params = new LinkedHashMap<>();
-        Matcher paramMatcher = PARAM_PATTERN.matcher(paramsPart);
-        while (paramMatcher.find()) {
-            params.put(paramMatcher.group(1), stripQuotes(paramMatcher.group(2)));
+        if (new LinkedHashSet<>(components).size() != components.size()) {
+            throw new IllegalArgumentException("Duplicate covered components");
         }
-
-        return new Parsed(components, params);
+        Map<String, Object> params = new LinkedHashMap<>();
+        member.getValue().params().forEach((name, value) -> params.put(name, plainParam(value)));
+        return new Parsed(member.getKey(), components, params);
     }
 
-    private static String stripQuotes(String value) {
-        if (value.length() >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-            return value.substring(1, value.length() - 1);
-        }
-        return value;
+    private static Object plainParam(Object value) {
+        return value instanceof StructuredFields.ByteSequence bytes ? bytes.base64() : StructuredFields.plain(value);
     }
 }

@@ -79,6 +79,131 @@ library has not yet updated, so we emit the new wire format while still acceptin
 person server are on draft-10; phase B for the new sigkey-08 schemes (`jwks`, `self-jwt`,
 `cached`, direct x509) and the AAuth §12.8.2 `scheme=jwt`-only rule.
 
+## AAuth draft-11 migration (2026-10-12)
+
+Protocol draft **-11** (2026-09-25) and Signature-Keys draft **-09** (2026-09-13) are out. The
+upstream role-by-role migration guide is at
+<https://github.com/dickhardt/AAuth/tree/main/upgrade-10-to-11>. The approved library plan is
+[PLAN-draft11.md](PLAN-draft11.md). Work lands on branch `draft11` (not merged to `main`).
+
+**Upstream gate**: the Python reference (`../aauth-python-library`, 0.3.5) is still on draft-10 — no
+`person_token`, `presented_token`, `mission_s256`, `auth_token_endpoint`, or `session-token`. So the
+same strategy as the -10 jump applies: **compliant emission, tolerant verification**, and no full
+Java↔Python -11 interop is possible yet.
+
+- **Phase A done (token model + endpoint renames)**:
+  - New `tokens/PersonTokens.java` (`aa-person+jwt`, `dwk aauth-person.json`): per-resource person
+    token with `(iss, sub)` identity, `cnf.jwk` binding, 1-hour lifetime cap and no-skew `exp`
+    (§7.1.4).
+  - `ResourceTokens` reshaped to -11 (§6.7): dropped `agent` and the `mission` object; added
+    REQUIRED `ps`, `sub`, `presented_jti`; added optional `mission_s256`, `tenant`, `login_hint`.
+    `verify` no longer takes/checks an expected agent.
+  - `AuthTokens` reshaped to -11 (§9.4): dropped `agent` and `act`; `sub` is REQUIRED and the person
+    is identified by `(iss, sub)`; added `ps`; mission is now `mission_s256`. Removed the draft-10
+    future-`iat` validity check (RS-51).
+  - `ResourceTokenIssuer` now issues from a `Grant` (presented-token context: `aud`/`ps`/`sub`/
+    `presented_jti`), not an agent identifier.
+  - `ChallengeBuilder` gained a `personToken()` challenge (`requirement=person-token`, §6.4); the
+    auth-token challenge now builds its embedded resource token from a `Grant`.
+  - `RequestVerifier.Result` dropped `act`; auth/person tokens surface the person `sub`; retired the
+    `agent`/`act` extraction.
+  - Metadata: PS doc emits `auth_token_endpoint` (was `token_endpoint`) and new
+    `person_token_endpoint`; `TokenExchange` reads the new name with a legacy fallback.
+  - `AAuthHeaders` gained `REQUIRE_PERSON_TOKEN` + `buildPersonTokenRequirement()`.
+  - Interop: `pythonAuthTokenVerifiesInJava` now asserts the draft-10 Python auth token (no `sub`)
+    is **rejected** by -11 verification, while the signature still verifies untyped (structural
+    parity). Flip back to a success check when the Python reference emits draft-11.
+
+- **Phase B done (mission retirement + resource-role wiring)**:
+  - Retired the `AAuth-Mission` request header: removed `HEADER_AAUTH_MISSION`, the `Mission`
+    record, and `buildMissionHeader`/`parseMissionHeader` from `AAuthHeaders` (RS-33/AG-30). The
+    mission now reaches the resource as the `mission_s256` claim in the presented person/auth token.
+  - `RequestVerifier.Result` replaced the parsed `AAuth-Mission` field with `@Nullable String
+    missionS256`, extracted from the presented token; dropped the header-coverage enforcement.
+  - `MissionBinding` trimmed to the still-valid `s256(blob)` hash plus a `matches(expected, blob)`
+    helper (AG-32); the `approver`-based `matchesDocument`/`matchesClaim` are gone.
+  - `ChallengeBuilder` person-token challenge (`requirement=person-token`) covered by tests.
+
+- **Phase C done (agent role, core)**:
+  - `TokenExchange.requestPersonToken` (new) requests a person token from the PS
+    `person_token_endpoint` (discovered, fallback `{ps}/person-token`) with `resource`,
+    `mission_s256`, `capabilities`; handles 200 and 202 + polling. The exchange's HTTP/signing
+    helpers were folded into a shared `Caller` context and a shared `pollDeferred`.
+  - `TokenExchange.Exchange` gained `presentedToken`; the auth-token request sends
+    `presented_token` (AG-21) when supplied and omits it otherwise (pre-draft-11 servers).
+  - Every PS POST now covers `content-type` + `content-digest` (AG-50). **Deviation from the
+    Python reference**, which signs these requests without body coverage; verifiers check whatever
+    components are listed, so -10 person servers are unaffected.
+  - New `PersonTokenCache` (per resource + mission, five-minute refresh margin, `clear()` on key
+    rotation, static `needsRefresh`).
+  - `ChallengeHandler.determineResponseScheme` takes a `HeldTokens` record; `person-token` is met
+    with `jwt` and errors when the agent holds no person/auth token.
+  - `ErrorCodes` updated to the draft-11 vocabulary; `invalid_agent_token` and
+    `expired_agent_token` removed (draft-11 reports a bad agent token as a 401 `Signature-Error`).
+
+- **Deferred**: AG-26 end-to-end helper for `requirement=auth-token` as a 202 at the resource,
+  AG-25, mission approval parsing and mission-endpoint actions (AG-32..36), sub-agent flow (AG-40);
+  Phase D (strict Ed25519, uppercase agent `local`, revocation `{jti, exp}`, JWT lifetime checks)
+  and Phase E (call chaining). See PLAN-draft11.md.
+
+**Cross-repo**: nothing released. The person-server and demo move to -11 against a library SNAPSHOT
+before any release; strict Ed25519 flips when the Python reference reaches -11.
+
+### Reference port D1–D7 (2026-10-13) — supersedes the Phase A–C strategy
+
+The Python reference reached draft-11 (christian-posta/aauth-python-library `fa3547a`: `aauth`
+0.5.0, `aauth-signing` 0.2.0). **Decision (user, 2026-10-12):** port the reference -11 module by
+module, reworking Phase A–C where it diverges. Java↔Python -11 interop is the acceptance gate.
+**Strictness decision (user):** fully strict like Python, on verification as well as emission:
+- `EdDSA` is rejected, and JWKs must carry `alg`.
+- `iss`/`aud`/`ps` must be lowercase HTTPS origins without a port.
+
+- **D1 signing**:
+  - `JoseException` codes and `Jwk.validateAlgorithm`. RSA is dropped, and only
+    Ed25519/ES256/ES384 are accepted.
+  - Strict `Signature-Input` parsing. `authorization` is auto-covered.
+  - `Content-Digest` is always recomputed on sign and checked on verify.
+  - Verification takes `requiredComponents` and `signatureWindow` (default 60 s).
+- **D2 tokens**:
+  - Generic `TokenVerifier` (typ→dwk table, server identifiers, 1-hour caps, `cnf.jwk`
+    thumbprint, revocation checker).
+  - Reshaped specs for agent, person, auth and resource tokens. Resource-token issuance
+    verifies the presented token and derives the claims from it.
+  - `Delegation` (sub-agent and upstream tokens).
+- **D3**: `revocation` package (`{jti, exp}`, `RevocationManager` cascade, signed send + 202
+  polling) and `missions.Missions`.
+- **D4 resource role**:
+  - `RequestVerifier.builder`, `jwt` scheme only, per-request `Requirements`.
+  - Wire error codes in `Result.errorCode()`.
+- **D5 agent role**:
+  - `TokenExchange` (`requestPersonToken`, `exchangeResourceToken`,
+    `completeDeferredResourceRequest`, injectable `HttpTransport`). Every token it returns is
+    verified.
+  - Reference `Poller` state machine, `ChallengeHandler`, `AgentRequestSigner`.
+- **D6**:
+  - Public `StructuredFields` and strict `AAuth-Requirement` parsing; token68
+    `Authorization: AAuth`.
+  - Validating metadata generators; `fetch`/`fetchAuthServer` check the issuer derived from
+    the well-known URL.
+  - `Egress.admitPublicUrl` on the library's default clients. Default clients no longer
+    follow redirects.
+  - `CachingJwksFetcher` validates metadata, and failed fetches count toward the rate limit.
+  - Error bodies use `detail`.
+- **D7**: `PythonInteropTest` rewritten for 0.5.0 (9 two-way tests, `AAUTH_PYTHON_LIB` override);
+  README and DEMO integration contract rewritten for -11.
+
+Deviations retired by the port:
+- Resource-level digest re-check: now done in the signing layer.
+- `http://` ps tolerance.
+- `EdDSA` tolerance.
+- `Accept-Signature` challenges for credential levels.
+- The `AAuth-Mission` header and coverage enforcement.
+- The pre-11 `presented_token` omission.
+
+Kept on purpose:
+- `PersonTokenCache` (not in the reference).
+- `content-type`/`content-digest` coverage on PS POSTs.
+
 ## Final review (2026-07-30)
 
 A security-focused review (java-reviewer agent) of the finished port found 4 issues, all fixed
@@ -125,12 +250,15 @@ Per user request (2026-07-30), test fixtures and examples use the local UMA lab 
 instead of `localhost`/`*.example`: `gateway.uma.lab` (resource), `alice-as.uma.lab` (auth
 server), `ps.uma.lab` (person server), `portal.uma.lab` (agent server), `grafana.uma.lab` /
 `keycloak.uma.lab` (miscellaneous). These resolve to 127.0.0.1 on this machine, so the
-live-socket tests (JDK HttpServer) bind locally and use the lab names in URLs. The single
-`http://localhost:8080` in `MetadataTest` is intentional — it tests the spec's
-localhost-only HTTP carve-out itself.
+live-socket tests (JDK HttpServer) bind locally and use the lab names in URLs. Since D6, the
+library's default clients refuse loopback addresses (egress admission). Live-socket tests
+therefore inject their own `HttpClient`, and `MetadataTest` asserts that
+`http://localhost` is rejected (draft-11 has no localhost carve-out).
 
 ## Deviations from the Python library
 
+- *Retired in the draft-11 port (2026-10-13): the next two entries describe 0.2.x. Digest
+  checking moved into `SignatureVerifier`, and the `AAuth-Mission` header no longer exists.*
 - **Content-Digest is enforced in the resource role (2026-08-02)**: both this library's
   low-level `SignatureVerifier` and the Python reference only sign/verify the
   `Content-Digest` *header*, so a tampered body with an intact header passes the HTTP

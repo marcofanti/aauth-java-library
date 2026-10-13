@@ -17,6 +17,17 @@ public class MetadataException extends AAuthException {
         this.metadataUrl = metadataUrl;
     }
 
+    private MetadataException(
+            String message, @Nullable String metadataUrl, String errorCode, @Nullable Throwable cause) {
+        super(message, errorCode, null, cause);
+        this.metadataUrl = metadataUrl;
+    }
+
+    /** A metadata failure with a specific error code (e.g. {@code issuer_mismatch}). */
+    public static MetadataException withCode(String message, @Nullable String metadataUrl, String errorCode) {
+        return new MetadataException(message, metadataUrl, errorCode, null);
+    }
+
     /** The metadata URL that failed, or {@code null}. */
     public @Nullable String metadataUrl() {
         return metadataUrl;

@@ -1,6 +1,7 @@
 package io.github.marcofanti.aauth.headers;
 
 import io.github.marcofanti.aauth.ChallengeException;
+import io.github.marcofanti.aauth.signing.StructuredFields;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -10,8 +11,8 @@ import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
- * AAuth protocol headers: requirement levels, challenge building/parsing, capabilities, access
- * tokens and mission binding.
+ * AAuth protocol headers: requirement levels, challenge building/parsing, capabilities and
+ * access tokens.
  *
  * <p>Per draft-hardt-aauth-protocol, the {@code AAuth-Requirement} response header conveys
  * AAuth-specific requirements (auth-token, interaction, approval, clarification, claims);
@@ -22,6 +23,13 @@ public final class AAuthHeaders {
     // Requirement levels.
     public static final String REQUIRE_PSEUDONYM = "pseudonym";
     public static final String REQUIRE_IDENTITY = "identity";
+
+    /** Draft-11: the resource requires the agent to sign with its agent token. */
+    public static final String REQUIRE_AGENT_TOKEN = "agent-token";
+
+    /** Draft-11 §6.4: the resource needs a person token before it will authorize. */
+    public static final String REQUIRE_PERSON_TOKEN = "person-token";
+
     public static final String REQUIRE_AUTH_TOKEN = "auth-token";
     public static final String REQUIRE_INTERACTION = "interaction";
     public static final String REQUIRE_APPROVAL = "approval";
@@ -37,7 +45,6 @@ public final class AAuthHeaders {
     public static final String HEADER_AAUTH_REQUIREMENT = "AAuth-Requirement";
     public static final String HEADER_AAUTH_ACCESS = "AAuth-Access";
     public static final String HEADER_AAUTH_CAPABILITIES = "AAuth-Capabilities";
-    public static final String HEADER_AAUTH_MISSION = "AAuth-Mission";
     public static final String HEADER_SIGNATURE_ERROR = "Signature-Error";
 
     /** Sigkey draft-08 §4.1: schemes the server accepts (with {@code unsupported_scheme}). */
@@ -51,12 +58,19 @@ public final class AAuthHeaders {
     public static final String CAPABILITY_CLARIFICATION = "clarification";
     public static final String CAPABILITY_PAYMENT = "payment";
 
-    private static final Set<String> AAUTH_PROTOCOL_LEVELS =
-            Set.of(REQUIRE_AUTH_TOKEN, REQUIRE_INTERACTION, REQUIRE_APPROVAL, REQUIRE_CLARIFICATION, REQUIRE_CLAIMS);
+    private static final Set<String> AAUTH_PROTOCOL_LEVELS = Set.of(
+            REQUIRE_AGENT_TOKEN,
+            REQUIRE_PERSON_TOKEN,
+            REQUIRE_AUTH_TOKEN,
+            REQUIRE_INTERACTION,
+            REQUIRE_APPROVAL,
+            REQUIRE_CLARIFICATION,
+            REQUIRE_CLAIMS);
 
-    private static final Pattern REQUIREMENT_PATTERN = Pattern.compile("requirement=([\\w-]+)");
+    private static final String INVALID_REQUIREMENT = "Invalid AAuth-Requirement structured dictionary";
+    private static final Pattern TOKEN68 = Pattern.compile("[A-Za-z0-9._~+/-]+=*");
+
     private static final Pattern REQUIRE_PATTERN = Pattern.compile("require=([\\w-]+)");
-    private static final Pattern QUOTED_PATTERN = Pattern.compile("\"([^\"]+)\"");
     private static final Pattern ACCEPT_SIGNATURE_SHAPE = Pattern.compile("\\s*sig\\d*=\\(");
 
     private AAuthHeaders() {}
@@ -103,6 +117,19 @@ public final class AAuthHeaders {
         return "requirement=auth-token; resource-token=\"" + resourceToken + "\"";
     }
 
+    /**
+     * Builds an {@code AAuth-Requirement} value requiring a person token (draft-11 §6.4). The
+     * header takes no parameters.
+     */
+    public static String buildPersonTokenRequirement() {
+        return "requirement=person-token";
+    }
+
+    /** Builds an {@code AAuth-Requirement} value requiring an agent token (draft-11). */
+    public static String buildAgentTokenRequirement() {
+        return "requirement=agent-token";
+    }
+
     /** Builds an {@code AAuth-Requirement} value for user interaction. */
     public static String buildInteractionRequirement(String url, String code) {
         return "requirement=interaction; url=\"" + url + "\"; code=\"" + code + "\"";
@@ -138,24 +165,31 @@ public final class AAuthHeaders {
     // --- Parsing --------------------------------------------------------------------------
 
     /**
-     * Parses a {@code Signature-Requirement} / {@code AAuth-Requirement} header value in
-     * {@code requirement=...} form.
+     * Parses an {@code AAuth-Requirement} header value strictly as an RFC 8941 Dictionary whose
+     * {@code requirement} member is a token, with optional {@code resource-token},
+     * {@code auth-server}, {@code url} and {@code code} parameters.
      *
-     * @throws ChallengeException if the value lacks a {@code requirement} parameter
+     * @throws ChallengeException if the value is not such a dictionary
      */
     public static ParsedChallenge parseSignatureRequirement(String headerValue) {
-        Matcher requirement = REQUIREMENT_PATTERN.matcher(headerValue);
-        if (!requirement.find()) {
-            throw new ChallengeException("Signature-Requirement header must include 'requirement' parameter");
+        StructuredFields.Item item;
+        try {
+            item = StructuredFields.parseDictionary(headerValue).get("requirement");
+        } catch (IllegalArgumentException e) {
+            throw new ChallengeException(INVALID_REQUIREMENT, e);
         }
+        if (item == null || !(item.value() instanceof StructuredFields.Token requirement)) {
+            throw new ChallengeException(INVALID_REQUIREMENT);
+        }
+        Map<String, Object> params = item.params();
         return new ParsedChallenge(
-                requirement.group(1),
-                quotedParam(headerValue, "resource-token"),
-                quotedParam(headerValue, "auth-server"),
-                quotedParam(headerValue, "url"),
-                quotedParam(headerValue, "code"),
-                innerList(headerValue, "algorithms"),
-                innerList(headerValue, "required_input"),
+                requirement.value(),
+                stringParam(params, "resource-token"),
+                stringParam(params, "auth-server"),
+                stringParam(params, "url"),
+                stringParam(params, "code"),
+                null,
+                null,
                 null,
                 null,
                 null);
@@ -276,54 +310,52 @@ public final class AAuthHeaders {
     }
 
     /**
-     * Extracts the opaque token from an {@code Authorization: AAuth <token>} request header.
-     * Returns {@code null} when the header is not an AAuth bearer.
+     * Builds an {@code AAuth-Access} response header value.
+     *
+     * @throws ChallengeException if the token is not a single token68 credential
      */
-    public static @Nullable String parseAuthorizationAAuthHeader(String headerValue) {
-        if (headerValue != null
-                && headerValue.toLowerCase(java.util.Locale.ROOT).startsWith("aauth ")) {
-            String token = headerValue.substring(6).strip();
-            return token.isEmpty() ? null : token;
-        }
-        return null;
+    public static String buildAAuthAccessHeader(String token) {
+        return validateToken68(token);
     }
 
-    /** Parsed {@code AAuth-Mission} header. */
-    public record Mission(
-            @Nullable String approver, @Nullable String s256) {}
-
-    /** Builds an {@code AAuth-Mission} request header value per spec §8.2. */
-    public static String buildMissionHeader(String approver, String s256) {
-        return "approver=\"" + approver + "\"; s256=\"" + s256 + "\"";
-    }
-
-    /** Parses an {@code AAuth-Mission} header (accepts legacy {@code manager=} for approver). */
-    public static Mission parseMissionHeader(String headerValue) {
-        String approver = quotedParam(headerValue, "approver");
-        if (approver == null) {
-            approver = quotedParam(headerValue, "manager");
+    /**
+     * Extracts the session credential from an {@code Authorization: AAuth <token68>} request
+     * header. Returns {@code null} when the header is absent or uses another scheme.
+     *
+     * @throws ChallengeException if the AAuth scheme carries no credential or a malformed one
+     */
+    public static @Nullable String parseAuthorizationAAuthHeader(@Nullable String headerValue) {
+        if (headerValue == null || headerValue.isEmpty()) {
+            return null;
         }
-        return new Mission(approver, quotedParam(headerValue, "s256"));
+        int space = headerValue.indexOf(' ');
+        String scheme = space < 0 ? headerValue : headerValue.substring(0, space);
+        if (!scheme.equalsIgnoreCase("aauth")) {
+            return null;
+        }
+        if (space < 0) {
+            throw new ChallengeException("Missing session credential");
+        }
+        return validateToken68(headerValue.substring(space + 1));
     }
 
     // --- Helpers ---------------------------------------------------------------------------
 
+    private static String validateToken68(String value) {
+        if (!TOKEN68.matcher(value).matches()) {
+            throw new ChallengeException("Invalid session token: expected exactly one token68 credential");
+        }
+        return value;
+    }
+
+    private static @Nullable String stringParam(Map<String, Object> params, String name) {
+        Object value = params.get(name);
+        return value == null ? null : String.valueOf(StructuredFields.plain(value));
+    }
+
     private static @Nullable String quotedParam(String headerValue, String name) {
         Matcher matcher = Pattern.compile(name + "=\"([^\"]+)\"").matcher(headerValue);
         return matcher.find() ? matcher.group(1) : null;
-    }
-
-    private static @Nullable List<String> innerList(String headerValue, String paramName) {
-        Matcher matcher = Pattern.compile(paramName + "=\\(([^)]+)\\)").matcher(headerValue);
-        if (!matcher.find()) {
-            return null;
-        }
-        List<String> values = new ArrayList<>();
-        Matcher quoted = QUOTED_PATTERN.matcher(matcher.group(1));
-        while (quoted.find()) {
-            values.add(quoted.group(1));
-        }
-        return values;
     }
 
     private static String quotedList(List<String> values) {

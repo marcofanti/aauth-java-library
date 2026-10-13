@@ -2,8 +2,7 @@ package io.github.marcofanti.aauth.keys;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.github.marcofanti.aauth.agent.TokenExchange;
-import io.github.marcofanti.aauth.signing.keys.KeyPairs;
+import io.github.marcofanti.aauth.http.HttpTransport;
 import java.net.http.HttpClient;
 import org.junit.jupiter.api.Test;
 
@@ -19,25 +18,7 @@ class Http11DefaultTest {
     }
 
     @Test
-    void tokenExchangeDefaultClientIsHttp11() {
-        TokenExchange.Exchange exchange = TokenExchange.Exchange.builder(
-                        "a.b.c", KeyPairs.generateEd25519(), "agent.jwt")
-                .build();
-
-        assertThat(exchange.httpClient().version()).isEqualTo(HttpClient.Version.HTTP_1_1);
-    }
-
-    @Test
-    void callerInjectedClientIsUntouched() {
-        HttpClient http2Client =
-                HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build();
-
-        TokenExchange.Exchange exchange = TokenExchange.Exchange.builder(
-                        "a.b.c", KeyPairs.generateEd25519(), "agent.jwt")
-                .httpClient(http2Client)
-                .build();
-
-        assertThat(exchange.httpClient()).isSameAs(http2Client);
-        assertThat(exchange.httpClient().version()).isEqualTo(HttpClient.Version.HTTP_2);
+    void defaultTransportClientIsHttp11() {
+        assertThat(HttpTransport.defaultHttpClient().version()).isEqualTo(HttpClient.Version.HTTP_1_1);
     }
 }

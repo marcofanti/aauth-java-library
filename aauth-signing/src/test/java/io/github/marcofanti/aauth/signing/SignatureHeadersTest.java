@@ -23,8 +23,7 @@ class SignatureHeadersTest {
         long after = System.currentTimeMillis() / 1000;
 
         SignatureInputHeader.Parsed parsed = SignatureInputHeader.parse(header);
-        long created = Long.parseLong(parsed.params().get("created"));
-        assertThat(created).isBetween(before, after);
+        assertThat(parsed.integerParam("created")).isBetween(before, after);
     }
 
     @Test
@@ -34,15 +33,51 @@ class SignatureHeadersTest {
 
         SignatureInputHeader.Parsed parsed = SignatureInputHeader.parse(header);
 
+        assertThat(parsed.label()).isEqualTo("sig");
         assertThat(parsed.components()).containsExactly("@method", "@authority", "@path", "signature-key");
-        assertThat(parsed.params()).containsEntry("created", "1700000000");
+        assertThat(parsed.params()).containsEntry("created", 1700000000L);
+    }
+
+    @Test
+    void parseReadsTypedParameters() {
+        SignatureInputHeader.Parsed parsed = SignatureInputHeader.parse(
+                "sig1=(\"@method\" \"content-digest\");created=1700000000;expires=1700000060;keyid=\"k1\";"
+                        + "alg=ed25519;x=1.5;flag;neg=?0;bytes=:AAEC:");
+
+        assertThat(parsed.label()).isEqualTo("sig1");
+        assertThat(parsed.integerParam("created")).isEqualTo(1700000000L);
+        assertThat(parsed.integerParam("expires")).isEqualTo(1700000060L);
+        assertThat(parsed.stringParam("keyid")).isEqualTo("k1");
+        assertThat(parsed.params())
+                .containsEntry("alg", "ed25519")
+                .containsEntry("x", new java.math.BigDecimal("1.5"))
+                .containsEntry("flag", Boolean.TRUE)
+                .containsEntry("neg", Boolean.FALSE)
+                .containsEntry("bytes", "AAEC");
+        // A quoted created is a string, not an integer — the verifier rejects it.
+        assertThat(SignatureInputHeader.parse("sig=(\"@method\");created=\"1700000000\"")
+                        .integerParam("created"))
+                .isNull();
     }
 
     @Test
     void parseRejectsInvalidFormat() {
-        assertThatThrownBy(() -> SignatureInputHeader.parse("not a header"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("Signature-Input");
+        for (String invalid : List.of(
+                "not a header",
+                "sig=(@method)",
+                "sig=(\"@method\" \"@method\")",
+                "sig=(\"@method\"),sig2=(\"@path\")",
+                "sig=(\"@method\"",
+                "Sig=(\"@method\")",
+                "sig=(\"a\"\"b\")",
+                "sig=(\"@method\");created=",
+                "sig=(\"@method\");x=?2",
+                "sig=(\"bad\\q\")",
+                "sig=(\"@method\");n=1234567890123456")) {
+            assertThatThrownBy(() -> SignatureInputHeader.parse(invalid))
+                    .as(invalid)
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test

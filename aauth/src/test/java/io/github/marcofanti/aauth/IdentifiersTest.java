@@ -14,6 +14,13 @@ class IdentifiersTest {
     }
 
     @Test
+    void agentIdentifiersAcceptUppercaseLocalParts() {
+        // Draft-11 §5.2: A-Z is allowed in the local part, compared exactly (no case folding).
+        assertThat(Identifiers.validateAgentIdentifier("aauth:Agent@portal.uma.lab"))
+                .isEqualTo("aauth:Agent@portal.uma.lab");
+    }
+
+    @Test
     void agentIdentifierRejectsBadForms() {
         assertThatThrownBy(() -> Identifiers.validateAgentIdentifier(null))
                 .isInstanceOf(IllegalArgumentException.class);
@@ -23,8 +30,12 @@ class IdentifiersTest {
                 .hasMessageContaining("@");
         assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:@domain"))
                 .hasMessageContaining("local");
-        assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:UPPER@domain"))
+        assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:bad/char@domain"))
                 .hasMessageContaining("invalid characters");
+        assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:x@Portal.uma.lab"))
+                .hasMessageContaining("lowercase hostname");
+        assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:x@portal.uma.lab:8001"))
+                .hasMessageContaining("lowercase hostname");
         assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:x@"))
                 .hasMessageContaining("domain");
         assertThatThrownBy(() -> Identifiers.validateAgentIdentifier("aauth:x@https://d"))
@@ -70,6 +81,8 @@ class IdentifiersTest {
                 .hasMessageContaining("fragment");
         assertThatThrownBy(() -> Identifiers.validateServerIdentifier("https://Gateway.uma.lab"))
                 .hasMessageContaining("lowercase");
+        assertThatThrownBy(() -> Identifiers.validateServerIdentifier("https://user@gateway.uma.lab"))
+                .hasMessageContaining("credentials");
         assertThatThrownBy(() -> Identifiers.validateServerIdentifier("")).hasMessageContaining("empty");
     }
 
@@ -83,16 +96,6 @@ class IdentifiersTest {
                 .hasMessageContaining("fragment");
         assertThatThrownBy(() -> Identifiers.validateEndpointUrl("http://alice-as.uma.lab/token"))
                 .hasMessageContaining("https");
-    }
-
-    @Test
-    void serverUrlToleratesHttpForDev() {
-        assertThat(Identifiers.validateServerUrl("http://ps.uma.lab:8765")).isEqualTo("http://ps.uma.lab:8765");
-        assertThat(Identifiers.validateServerUrl("https://ps.example")).isEqualTo("https://ps.example");
-        assertThatThrownBy(() -> Identifiers.validateServerUrl("not-a-url")).hasMessageContaining("scheme");
-        assertThatThrownBy(() -> Identifiers.validateServerUrl("ftp://x.example"))
-                .hasMessageContaining("scheme");
-        assertThatThrownBy(() -> Identifiers.validateServerUrl("")).hasMessageContaining("empty");
     }
 
     @Test

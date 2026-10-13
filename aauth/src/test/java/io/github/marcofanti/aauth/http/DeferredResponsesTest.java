@@ -65,7 +65,7 @@ class DeferredResponsesTest {
                         .require("claims")
                         .requiredClaims(List.of("email", "name"))
                         .build()))
-                .containsEntry("AAuth-Requirement", "requirement=claims; required_claims=(\"email\" \"name\")");
+                .containsEntry("AAuth-Requirement", "requirement=claims");
     }
 
     @Test
@@ -75,7 +75,7 @@ class DeferredResponsesTest {
                 .containsEntry("expires_in", 3600);
         assertThat(DeferredResponses.buildPollingErrorBody("denied", "user said no"))
                 .containsEntry("error", "denied")
-                .containsEntry("error_description", "user said no");
+                .containsEntry("detail", "user said no");
         assertThat(DeferredResponses.buildPollingErrorBody("expired", null)).containsOnlyKeys("error");
     }
 

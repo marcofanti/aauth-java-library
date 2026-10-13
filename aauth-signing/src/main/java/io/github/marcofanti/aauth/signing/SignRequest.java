@@ -14,8 +14,11 @@ import org.jspecify.annotations.Nullable;
  * @param body request body, or {@code null}
  * @param keyPair the signing key pair (Ed25519 or EC); the public half is needed for {@code hwk}
  * @param scheme the Signature-Key scheme
- * @param additionalComponents extra covered components required by the resource (only
- *     {@code content-type} / {@code content-digest} are honored, and only when a body is present)
+ * @param additionalComponents extra covered components required by the recipient, placed before
+ *     {@code signature-key}. {@code content-digest} requires a body and is always recomputed;
+ *     {@code content-type} defaults to {@code application/octet-stream} when absent; any other
+ *     entry must name a header present on the request. An {@code Authorization} header is always
+ *     covered.
  * @param created signature creation time in Unix seconds; {@code null} uses the current time
  */
 // byte[] body is intentional: raw request bytes; record equality is never used.

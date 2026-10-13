@@ -8,6 +8,7 @@ import java.security.interfaces.ECPrivateKey;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import org.jspecify.annotations.Nullable;
@@ -45,31 +46,30 @@ public final class RequestSigner {
             Map<String, String> addedHeaders = new LinkedHashMap<>();
             workingHeaders.put("Signature-Key", signatureKeyHeader);
 
-            List<String> bodyComponents = new ArrayList<>();
+            // Callers select coverage per the recipient's profile; an Authorization header is
+            // always covered (draft-11, mirroring the reference signer).
+            List<String> components = new ArrayList<>(request.additionalComponents());
+            if (lookup(workingHeaders, "authorization") != null) {
+                components.add("authorization");
+            }
             byte[] body = request.body();
-            if (body != null && body.length > 0) {
-                for (String component : request.additionalComponents()) {
-                    if ("content-type".equals(component) || "content-digest".equals(component)) {
-                        bodyComponents.add(component);
-                    }
+            if (components.contains("content-digest")) {
+                if (body == null) {
+                    throw new HttpSignatureException("content-digest requires body bytes");
                 }
-                if (bodyComponents.contains("content-digest") && lookup(workingHeaders, "content-digest") == null) {
-                    String digest = SignatureBase.contentDigest(body);
-                    workingHeaders.put("Content-Digest", digest);
-                    addedHeaders.put("Content-Digest", digest);
-                }
-                if (bodyComponents.contains("content-type") && lookup(workingHeaders, "content-type") == null) {
-                    workingHeaders.put("Content-Type", "application/octet-stream");
-                    addedHeaders.put("Content-Type", "application/octet-stream");
-                }
+                // Always recompute: a caller-supplied digest must not be trusted to match the body.
+                workingHeaders.keySet().removeIf(name -> name.equalsIgnoreCase("content-digest"));
+                String digest = SignatureBase.contentDigest(body);
+                workingHeaders.put("Content-Digest", digest);
+                addedHeaders.put("Content-Digest", digest);
+            }
+            if (components.contains("content-type") && lookup(workingHeaders, "content-type") == null) {
+                workingHeaders.put("Content-Type", "application/octet-stream");
+                addedHeaders.put("Content-Type", "application/octet-stream");
             }
 
-            // Cover aauth-mission when the request carries AAuth-Mission (spec §Authorization
-            // Endpoint Request).
-            boolean includeAauthMission = lookup(workingHeaders, "aauth-mission") != null;
-
             List<String> coveredComponents =
-                    SignatureBase.determineCoveredComponents(query, body, bodyComponents, includeAauthMission);
+                    List.copyOf(new LinkedHashSet<>(SignatureBase.determineCoveredComponents(query, body, components)));
 
             long created = request.created() != null
                     ? request.created()
