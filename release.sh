@@ -64,6 +64,18 @@ if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
   exit 1
 fi
 
+say "Preflight: Maven version"
+# Maven 3.10+ installs local-repository files (maven-metadata-local.xml, _remote.repositories)
+# into the central-publishing staging bundle, and Central rejects it ("Bundle has content that
+# does NOT have a .pom file"). central-publishing-maven-plugin 0.11.0 has no fix.
+mvn_version=$(mvn --version 2>/dev/null | head -1 | awk '{print $3}')
+IFS=.- read -r mvn_major mvn_minor _ <<<"$mvn_version"
+if ((mvn_major > 3 || (mvn_major == 3 && mvn_minor >= 10))); then
+  echo "ERROR: Maven $mvn_version builds a staging bundle Central rejects; release with Maven 3.9.x:" >&2
+  echo "  PATH=/path/to/apache-maven-3.9.x/bin:\$PATH ./release.sh $VERSION" >&2
+  exit 1
+fi
+
 say "Preflight: Central Portal credentials"
 grep -q '<id>central</id>' ~/.m2/settings.xml || {
   echo "ERROR: no <server><id>central</id> entry in ~/.m2/settings.xml (see RELEASING.md)" >&2
