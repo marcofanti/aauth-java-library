@@ -158,7 +158,11 @@ tests (rewritten against the 0.5.0 API).
 - [x] `RequestVerifier`: jwt scheme only (`unsupported_scheme`), trusted AS/PS issuers, token verified with the
   resource as audience, revocation, required scopes (`insufficient_scope`), bound session tokens.
 - [x] `ChallengeBuilder` / `ResourceTokenIssuer` (landed with D2).
-### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py)
+### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py) — DONE
+- [x] `TokenExchange`: `requestPersonToken`, `exchangeResourceToken`, `completeDeferredResourceRequest`; every token
+  verified; strict PS discovery; injectable `HttpTransport`.
+- [x] `Poller`: reference state machine (initial response, same-origin Location, interaction/clarification).
+- [x] `ChallengeHandler` (credential requirements only) and `AgentRequestSigner` (jwt profile, recipient roles).
 ### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py
 ### D7 — interop + docs
 - [x] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override (9 two-way tests, done with D2).

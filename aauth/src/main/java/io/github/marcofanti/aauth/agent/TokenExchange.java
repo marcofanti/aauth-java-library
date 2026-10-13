@@ -1,47 +1,61 @@
 package io.github.marcofanti.aauth.agent;
 
 import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import io.github.marcofanti.aauth.Identifiers;
 import io.github.marcofanti.aauth.TokenException;
 import io.github.marcofanti.aauth.headers.AAuthHeaders;
-import io.github.marcofanti.aauth.keys.DefaultHttpClient;
+import io.github.marcofanti.aauth.http.AAuthResponse;
+import io.github.marcofanti.aauth.http.HttpTransport;
+import io.github.marcofanti.aauth.keys.JsonHttpClient;
 import io.github.marcofanti.aauth.metadata.Metadata;
-import io.github.marcofanti.aauth.signing.Jwts;
+import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.RequestSigner;
 import io.github.marcofanti.aauth.signing.SignRequest;
 import io.github.marcofanti.aauth.signing.SignatureScheme;
+import io.github.marcofanti.aauth.signing.keys.Jwk;
+import io.github.marcofanti.aauth.tokens.AgentTokens;
+import io.github.marcofanti.aauth.tokens.AuthTokens;
+import io.github.marcofanti.aauth.tokens.Delegation;
+import io.github.marcofanti.aauth.tokens.PersonTokens;
+import io.github.marcofanti.aauth.tokens.ResourceTokens;
+import io.github.marcofanti.aauth.tokens.TokenVerifier;
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
+import java.io.UncheckedIOException;
 import java.security.KeyPair;
-import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Agent ↔ person server token requests (draft-11): person tokens from
- * {@code person_token_endpoint} (§7.1) and auth tokens from {@code auth_token_endpoint} in
- * exchange for a resource token plus the {@code presented_token} (§7.2).
+ * Person-token acquisition, verified resource challenges and PS token exchange (draft-11 §7,
+ * mirrors the reference {@code agent/token_exchange}).
+ *
+ * <p>Every token is verified before it is used or returned: the agent's own token against its
+ * signing key, the resource token's binding to the presented token, and the person or auth token
+ * the PS returns (issuer, audience, person, mission, tenant and lifetime). PS endpoints are
+ * discovered only from {@code {ps}/.well-known/aauth-person.json}. Requests to the PS are signed
+ * under the {@code jwt} scheme with {@code content-digest} and {@code content-type} covered.
  */
 public final class TokenExchange {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
     private static final TypeReference<Map<String, Object>> MAP_TYPE = new TypeReference<>() {};
-    private static final String PERSON_TOKEN_TYPE = "aa-person+jwt";
-    private static final List<String> BODY_COMPONENTS = List.of("content-type", "content-digest");
+    private static final List<String> BODY_COMPONENTS = List.of("content-digest", "content-type");
 
     private TokenExchange() {}
 
     /**
-     * Extracts the {@code resource_token} from a 401 AAuth challenge response's headers.
-     * Returns {@code null} when no challenge header carries one.
+     * Extracts the {@code resource-token} from a challenge response's headers, or {@code null}
+     * when no challenge header carries one.
      */
     public static @Nullable String extractResourceToken(Map<String, String> headers) {
         String raw = AAuthHeaders.getChallengeHeaderValue(headers);
@@ -56,79 +70,50 @@ public final class TokenExchange {
     }
 
     /**
-     * Parameters for {@link #exchangeResourceToken(Exchange)}.
+     * The agent's signing context.
      *
-     * @param resourceToken the resource token from the 401 challenge
      * @param keyPair the agent's signing key pair
-     * @param agentJwt the agent token ({@code aa-agent+jwt}) for the Signature-Key header
-     * @param presentedToken the token the agent presented to the resource that issued the resource
-     *     token — the person token on the first challenge, or the auth token on a step-up
-     *     (draft-11 §7.2.1, REQUIRED); {@code null} omits it for pre-draft-11 person servers
-     * @param httpClient HTTP client; {@code null} uses a default with a 30s timeout pinned to
-     *     HTTP/1.1 (the JDK's h2c upgrade breaks h11-based person servers such as
-     *     uvicorn/FastAPI). Caller-injected clients are used as-is.
-     * @param onInteraction callback invoked with (interactionUrl, code) when the PS requires
-     *     human interaction
-     * @param onClarification callback invoked with (pendingUrl, question); returns the answer
-     * @param maxPolls maximum polling attempts (default 60)
+     * @param agentJwt the agent token, presented under the {@code jwt} scheme
+     * @param jwksFetcher resolves token issuers' JWKS from {@code (iss, dwk, kid)}
+     * @param transport sends HTTP requests
+     * @param onInteraction invoked with (interaction URL, code) when the PS needs the person
+     * @param onClarification invoked with (pending URL, question); returns the answer
+     * @param maxPolls maximum polls plus clarification replies on a deferred response
      * @param sleeper poll sleep implementation (injectable for tests)
      */
-    public record Exchange(
-            String resourceToken,
+    public record Agent(
             KeyPair keyPair,
             String agentJwt,
-            @Nullable String presentedToken,
-            HttpClient httpClient,
+            JwksFetcher jwksFetcher,
+            HttpTransport transport,
             @Nullable BiConsumer<String, String> onInteraction,
             @Nullable BiFunction<String, String, String> onClarification,
             int maxPolls,
             Poller.@Nullable Sleeper sleeper) {
 
-        public Exchange {
-            if (resourceToken == null || keyPair == null || agentJwt == null) {
-                throw new IllegalArgumentException("resourceToken, keyPair and agentJwt are required");
-            }
-            httpClient = httpClient == null ? defaultHttpClient() : httpClient;
-            maxPolls = maxPolls <= 0 ? 60 : maxPolls;
+        public static Builder builder(KeyPair keyPair, String agentJwt, JwksFetcher jwksFetcher) {
+            return new Builder(keyPair, agentJwt, jwksFetcher);
         }
 
-        private static HttpClient defaultHttpClient() {
-            return HttpClient.newBuilder()
-                    .version(HttpClient.Version.HTTP_1_1)
-                    .connectTimeout(Duration.ofSeconds(30))
-                    .build();
-        }
-
-        public static Builder builder(String resourceToken, KeyPair keyPair, String agentJwt) {
-            return new Builder(resourceToken, keyPair, agentJwt);
-        }
-
-        /** Builder for {@link Exchange}. */
+        /** Builder for {@link Agent}; the transport defaults to {@link HttpTransport#defaultTransport()}. */
         public static final class Builder {
-            private final String resourceToken;
             private final KeyPair keyPair;
             private final String agentJwt;
-            private @Nullable String presentedToken;
-            private @Nullable HttpClient httpClient;
+            private final JwksFetcher jwksFetcher;
+            private @Nullable HttpTransport transport;
             private @Nullable BiConsumer<String, String> onInteraction;
             private @Nullable BiFunction<String, String, String> onClarification;
             private int maxPolls = 60;
             private Poller.@Nullable Sleeper sleeper;
 
-            private Builder(String resourceToken, KeyPair keyPair, String agentJwt) {
-                this.resourceToken = resourceToken;
+            private Builder(KeyPair keyPair, String agentJwt, JwksFetcher jwksFetcher) {
                 this.keyPair = keyPair;
                 this.agentJwt = agentJwt;
+                this.jwksFetcher = jwksFetcher;
             }
 
-            /** The token presented to the resource (person token, or auth token on step-up). */
-            public Builder presentedToken(@Nullable String presentedToken) {
-                this.presentedToken = presentedToken;
-                return this;
-            }
-
-            public Builder httpClient(@Nullable HttpClient httpClient) {
-                this.httpClient = httpClient;
+            public Builder transport(HttpTransport transport) {
+                this.transport = transport;
                 return this;
             }
 
@@ -152,13 +137,12 @@ public final class TokenExchange {
                 return this;
             }
 
-            public Exchange build() {
-                return new Exchange(
-                        resourceToken,
+            public Agent build() {
+                return new Agent(
                         keyPair,
                         agentJwt,
-                        presentedToken,
-                        httpClient == null ? defaultHttpClient() : httpClient,
+                        jwksFetcher,
+                        transport != null ? transport : HttpTransport.defaultTransport(),
                         onInteraction,
                         onClarification,
                         maxPolls,
@@ -167,350 +151,384 @@ public final class TokenExchange {
         }
     }
 
-    /**
-     * Exchanges a resource token for an auth token via the person server:
-     *
-     * <ol>
-     *   <li>decode the resource token's {@code aud} claim to locate the PS
-     *   <li>discover the PS {@code auth_token_endpoint} (legacy {@code token_endpoint}) via
-     *       {@code /.well-known/aauth-person.json} (falls back to {@code {aud}/token})
-     *   <li>POST the resource token and {@code presented_token}, signed with the {@code jwt}
-     *       scheme (agent token) with the body covered
-     *   <li>on 200 return the auth token; on 202 poll the Location URL until terminal
-     * </ol>
-     *
-     * @return the auth token ({@code aa-auth+jwt}) issued by the PS
-     * @throws TokenException on malformed tokens, non-recoverable PS errors, or exhausted polling
-     */
-    public static String exchangeResourceToken(Exchange exchange) {
-        // Step 1: locate the PS via the resource token's aud claim.
-        Jwts.Decoded resourceToken;
-        try {
-            resourceToken = Jwts.parse(exchange.resourceToken());
-        } catch (IllegalArgumentException e) {
-            throw new TokenException(
-                    "Cannot decode resource_token JWT: " + e.getMessage(), "aa-resource+jwt", null, null, e);
-        }
-        String aud = resourceToken.claim("aud");
-        if (aud == null) {
-            throw new TokenException("resource_token missing 'aud' claim — cannot locate PS", "aa-resource+jwt");
-        }
-
-        // Step 2: discover the token endpoint, defaulting to {aud}/token.
-        String psBase = aud.endsWith("/") ? aud.substring(0, aud.length() - 1) : aud;
-        String tokenEndpoint = psBase + "/token";
-        try {
-            Map<String, Object> metadata =
-                    Metadata.fetchPersonServer(psBase, new DefaultHttpClient(exchange.httpClient()));
-            // Draft-11 renamed the PS endpoint to auth_token_endpoint; fall back to the
-            // legacy token_endpoint so pre-draft-11 person servers still resolve.
-            Object discovered = metadata.get("auth_token_endpoint");
-            if (discovered == null || discovered.toString().isEmpty()) {
-                discovered = metadata.get("token_endpoint");
-            }
-            if (discovered != null && !discovered.toString().isEmpty()) {
-                tokenEndpoint = discovered.toString();
-            }
-        } catch (RuntimeException e) {
-            // Metadata fetch failed — keep the fallback endpoint.
-        }
-
-        // Step 3: sign and POST the resource token. Draft-11 §7.2.1 requires presented_token
-        // alongside it; omitted for pre-draft-11 person servers when the caller has none.
-        Map<String, Object> bodyMap = new LinkedHashMap<>();
-        bodyMap.put("resource_token", exchange.resourceToken());
-        if (exchange.presentedToken() != null) {
-            bodyMap.put("presented_token", exchange.presentedToken());
-        }
-        byte[] body = toJsonBytes(bodyMap);
-        Caller caller = new Caller(exchange.httpClient(), exchange.keyPair(), exchange.agentJwt());
-        HttpJson response = postJson(caller, tokenEndpoint, body);
-
-        // Step 4a: immediate success.
-        if (response.status() == 200) {
-            Object authToken = response.body().get("auth_token");
-            if (authToken == null) {
-                throw new TokenException(
-                        "PS response missing 'auth_token'; response keys: "
-                                + response.body().keySet(),
-                        "aa-auth+jwt");
-            }
-            return authToken.toString();
-        }
-
-        // Step 4b: deferred — poll the Location URL.
-        if (response.status() == 202) {
-            Poller.PollingResult result = pollDeferred(
-                    caller,
-                    response,
-                    exchange.maxPolls(),
-                    exchange.onInteraction(),
-                    exchange.onClarification(),
-                    exchange.sleeper());
-            if (result.authToken() == null) {
-                throw new TokenException("PS polling succeeded but response missing 'auth_token'", "aa-auth+jwt");
-            }
-            return result.authToken();
-        }
-
-        throw new TokenException(
-                "PS auth_token_endpoint returned HTTP " + response.status() + ": " + response.rawBodyPreview(),
-                "aa-auth+jwt");
-    }
-
-    // --- Person tokens (draft-11 §7.1) ---------------------------------------------------------
+    // --- Person tokens (§7.1) ------------------------------------------------------------------
 
     /**
-     * Parameters for {@link #requestPersonToken(PersonTokenRequest)}.
+     * Requests a person token for {@code resourceId} from the agent's PS (AG-10).
      *
-     * @param personServer the agent's person server identifier (its {@code ps})
-     * @param resource the resource identifier the person token is for (REQUIRED)
-     * @param keyPair the agent's signing key pair
-     * @param agentJwt the agent token ({@code aa-agent+jwt}), presented under the {@code jwt} scheme
-     * @param missionS256 optional mission binding to carry into the person token
-     * @param capabilities optional agent capabilities; without them a PS that must reach the person
-     *     answers {@code user_unreachable} (AG-10)
-     * @param httpClient HTTP client; {@code null} uses the HTTP/1.1-pinned default
-     * @param onInteraction callback for a deferred response requiring interaction
-     * @param maxPolls maximum polling attempts on a 202 (default 60)
-     * @param sleeper poll sleep implementation (injectable for tests)
+     * @param subagentToken a sub-agent's token, for parent-mediated issuance bound to its key, or
+     *     {@code null}
+     * @param options further request parameters, e.g. {@code mission_s256}, {@code capabilities},
+     *     {@code login_hint}, {@code upstream_token} (whose mission is inherited)
+     * @return the verified person token
+     * @throws TokenException if a token fails verification, the PS refuses, or the returned token
+     *     outlives the agent token or names another mission
+     * @throws io.github.marcofanti.aauth.MetadataException if PS discovery fails
      */
-    public record PersonTokenRequest(
+    public static String requestPersonToken(
+            Agent agent,
             String personServer,
-            String resource,
-            KeyPair keyPair,
-            String agentJwt,
-            @Nullable String missionS256,
-            @Nullable List<String> capabilities,
-            @Nullable HttpClient httpClient,
-            @Nullable BiConsumer<String, String> onInteraction,
-            int maxPolls,
-            Poller.@Nullable Sleeper sleeper) {
-
-        public PersonTokenRequest {
-            if (personServer == null || resource == null || keyPair == null || agentJwt == null) {
-                throw new IllegalArgumentException("personServer, resource, keyPair and agentJwt are required");
-            }
-            maxPolls = maxPolls <= 0 ? 60 : maxPolls;
+            String resourceId,
+            @Nullable String subagentToken,
+            Map<String, Object> options) {
+        Identifiers.validateServerIdentifier(personServer);
+        Identifiers.validateServerIdentifier(resourceId);
+        Map<String, Object> params = new LinkedHashMap<>(options);
+        Map<String, Object> key = signingJwk(agent);
+        Map<String, Object> agentClaims = verifyAgent(agent, key, "Sub-agent must use parent-mediated authorization");
+        long limit = number(agentClaims.get("exp"));
+        if (subagentToken != null) {
+            Map<String, Object> child =
+                    Delegation.verifySubagentToken(agent.agentJwt(), subagentToken, agent.jwksFetcher());
+            key = confirmationJwk(child);
+            limit = Math.min(limit, number(child.get("exp")));
+            params.put("subagent_token", subagentToken);
         }
+        Map<String, Object> upstream = null;
+        if (params.get("upstream_token") instanceof String upstreamToken) {
+            upstream = Delegation.verifyUpstreamToken(
+                    upstreamToken, agent.jwksFetcher(), upstreamOptions(agent, personServer));
+            if (upstream.get("mission_s256") != null) {
+                params.put("mission_s256", upstream.get("mission_s256"));
+            }
+        }
+        Map<String, Object> metadata = Metadata.fetchPersonServer(personServer, jsonClient(agent.transport()));
+        params.put("resource", resourceId);
+        Map<String, Object> data = postPs(String.valueOf(metadata.get("person_token_endpoint")), params, agent);
+        if (!(data.get("person_token") instanceof String token) || token.isEmpty()) {
+            throw new TokenException("PS response missing person_token", PersonTokens.TYPE);
+        }
+        Map<String, Object> claims = TokenVerifier.verify(
+                token,
+                agent.jwksFetcher(),
+                new TokenVerifier.Options(PersonTokens.TYPE, personServer, resourceId, key, null));
+        if (number(claims.get("exp")) > limit
+                || !Objects.equals(claims.get("mission_s256"), params.get("mission_s256"))) {
+            throw new TokenException("Person token context or lifetime mismatch", PersonTokens.TYPE);
+        }
+        if (upstream != null && number(claims.get("exp")) > number(upstream.get("exp"))) {
+            throw new TokenException("Person token outlives upstream token", PersonTokens.TYPE);
+        }
+        return token;
     }
 
-    /** A person token and its lifetime as returned by the PS. */
-    public record PersonTokenResponse(
-            String personToken, @Nullable Long expiresIn) {}
+    // --- Auth tokens (§7.2) --------------------------------------------------------------------
 
     /**
-     * Requests a person token ({@code aa-person+jwt}) for one resource from the PS's
-     * {@code person_token_endpoint} (draft-11 §7.1, AG-10):
+     * An auth-token request: the resource's challenge and the context it was issued in.
      *
-     * <ol>
-     *   <li>discover {@code person_token_endpoint} via {@code /.well-known/aauth-person.json}
-     *       (falls back to {@code {ps}/person-token})
-     *   <li>POST {@code resource} (+ {@code mission_s256}, {@code capabilities}), signed with the
-     *       agent token under the {@code jwt} scheme
-     *   <li>on 200 return {@code {person_token, expires_in}}; on 202 poll until terminal
-     * </ol>
-     *
-     * @throws TokenException on PS errors, a malformed response, or exhausted polling
+     * @param resourceToken the resource token from the challenge
+     * @param presentedToken the person or auth token the agent presented to the resource
+     * @param resourceId the resource identifier
+     * @param personServer the agent's PS
+     * @param subagentToken a sub-agent's token, for parent-mediated exchange, or {@code null}
+     * @param upstreamToken the upstream token when chaining a call, or {@code null}
+     * @param options further request parameters
      */
-    public static PersonTokenResponse requestPersonToken(PersonTokenRequest request) {
-        HttpClient requestedClient = request.httpClient();
-        HttpClient httpClient = requestedClient != null ? requestedClient : Exchange.defaultHttpClient();
-        Caller caller = new Caller(httpClient, request.keyPair(), request.agentJwt());
+    public record AuthTokenRequest(
+            String resourceToken,
+            String presentedToken,
+            String resourceId,
+            String personServer,
+            @Nullable String subagentToken,
+            @Nullable String upstreamToken,
+            Map<String, Object> options) {
 
-        String psBase = stripTrailingSlash(request.personServer());
-        String endpoint = discoverEndpoint(psBase, httpClient, "person_token_endpoint", psBase + "/person-token");
+        public AuthTokenRequest {
+            options = Map.copyOf(options);
+        }
 
-        Map<String, Object> bodyMap = new LinkedHashMap<>();
-        bodyMap.put("resource", request.resource());
-        String missionS256 = request.missionS256();
-        if (missionS256 != null) {
-            bodyMap.put("mission_s256", missionS256);
+        public static AuthTokenRequest of(
+                String resourceToken, String presentedToken, String resourceId, String personServer) {
+            return new AuthTokenRequest(resourceToken, presentedToken, resourceId, personServer, null, null, Map.of());
         }
-        List<String> capabilities = request.capabilities();
-        if (capabilities != null && !capabilities.isEmpty()) {
-            bodyMap.put("capabilities", capabilities);
-        }
-        HttpJson response = postJson(caller, endpoint, toJsonBytes(bodyMap));
-
-        Map<String, Object> result;
-        if (response.status() == 200) {
-            result = response.body();
-        } else if (response.status() == 202) {
-            result = pollDeferred(
-                            caller, response, request.maxPolls(), request.onInteraction(), null, request.sleeper())
-                    .responseBody();
-        } else {
-            throw new TokenException(
-                    "PS person_token_endpoint returned HTTP " + response.status() + ": " + response.rawBodyPreview(),
-                    PERSON_TOKEN_TYPE);
-        }
-        return personTokenResponse(result);
     }
 
-    private static PersonTokenResponse personTokenResponse(Map<String, Object> body) {
-        Object personToken = body.get("person_token");
-        if (personToken == null) {
-            throw new TokenException(
-                    "PS response missing 'person_token'; response keys: " + body.keySet(), PERSON_TOKEN_TYPE);
+    /**
+     * Exchanges a resource token for an auth token at the agent's PS {@code auth_token_endpoint}
+     * (AG-20, AG-21), sending {@code presented_token} with it.
+     *
+     * @return the verified auth token
+     * @throws TokenException if a token fails verification (the resource token is checked before
+     *     any network call), the PS refuses, or the returned token does not match the challenge
+     * @throws io.github.marcofanti.aauth.MetadataException if PS discovery fails
+     */
+    public static String exchangeResourceToken(Agent agent, AuthTokenRequest request) {
+        Identifiers.validateServerIdentifier(request.personServer());
+        Map<String, Object> key = signingJwk(agent);
+        Map<String, Object> agentClaims = verifyAgent(agent, key, "Sub-agents cannot request authorization directly");
+        List<Long> limits = new ArrayList<>(List.of(number(agentClaims.get("exp"))));
+        String subagentToken = request.subagentToken();
+        if (subagentToken != null) {
+            Map<String, Object> child =
+                    Delegation.verifySubagentToken(agent.agentJwt(), subagentToken, agent.jwksFetcher());
+            key = confirmationJwk(child);
+            limits.add(number(child.get("exp")));
         }
-        Long expiresIn = body.get("expires_in") instanceof Number n ? n.longValue() : null;
-        return new PersonTokenResponse(personToken.toString(), expiresIn);
+        Map<String, Object> upstream = null;
+        String upstreamToken = request.upstreamToken();
+        if (upstreamToken != null) {
+            upstream = Delegation.verifyUpstreamToken(
+                    upstreamToken, agent.jwksFetcher(), upstreamOptions(agent, request.personServer()));
+        }
+        Map<String, Object> rt = ResourceTokens.verify(
+                request.resourceToken(),
+                agent.jwksFetcher(),
+                new ResourceTokens.VerifyOptions(
+                        request.presentedToken(),
+                        null,
+                        request.resourceId(),
+                        request.personServer(),
+                        Jwk.thumbprint(key),
+                        null,
+                        null));
+        Map<String, Object> params = new LinkedHashMap<>(request.options());
+        params.put("resource_token", request.resourceToken());
+        params.put("presented_token", request.presentedToken());
+        if (rt.get("login_hint") != null) {
+            params.put("login_hint", rt.get("login_hint"));
+        }
+        if (subagentToken != null) {
+            params.put("subagent_token", subagentToken);
+        }
+        if (upstreamToken != null) {
+            params.put("upstream_token", upstreamToken);
+        }
+        Map<String, Object> metadata =
+                Metadata.fetchPersonServer(request.personServer(), jsonClient(agent.transport()));
+        Map<String, Object> data = postPs(String.valueOf(metadata.get("auth_token_endpoint")), params, agent);
+        if (!(data.get("auth_token") instanceof String token) || token.isEmpty()) {
+            throw new TokenException("PS response missing auth_token", AuthTokens.TYPE);
+        }
+        verifyReturnedAuthToken(agent, request, rt, key, token, limits, upstream);
+        return token;
     }
 
-    private static String discoverEndpoint(String psBase, HttpClient httpClient, String field, String fallback) {
+    private static void verifyReturnedAuthToken(
+            Agent agent,
+            AuthTokenRequest request,
+            Map<String, Object> rt,
+            Map<String, Object> key,
+            String token,
+            List<Long> limits,
+            @Nullable Map<String, Object> upstream) {
+        Map<String, Object> claims = TokenVerifier.verify(
+                token,
+                agent.jwksFetcher(),
+                new TokenVerifier.Options(
+                        AuthTokens.TYPE, String.valueOf(rt.get("aud")), request.resourceId(), key, null));
+        if (!Objects.equals(claims.get("sub"), rt.get("sub"))
+                || !request.personServer().equals(claims.get("ps"))) {
+            throw new TokenException("Returned auth token person binding mismatch", AuthTokens.TYPE);
+        }
+        if (!Objects.equals(claims.get("mission_s256"), rt.get("mission_s256"))
+                || !Objects.equals(claims.get("tenant"), rt.get("tenant"))) {
+            throw new TokenException("Returned auth token context mismatch", AuthTokens.TYPE);
+        }
+        Map<String, Object> presented = TokenVerifier.verify(
+                request.presentedToken(), agent.jwksFetcher(), TokenVerifier.Options.forType(null));
+        limits.add(number(presented.get("exp")));
+        if (upstream != null) {
+            limits.add(number(upstream.get("exp")));
+            if (!Objects.equals(claims.get("mission_s256"), upstream.get("mission_s256"))) {
+                throw new TokenException("Downstream mission does not match upstream context", AuthTokens.TYPE);
+            }
+        }
+        if (number(claims.get("exp")) > Collections.min(limits)) {
+            throw new TokenException("Auth token outlives dependency", AuthTokens.TYPE);
+        }
+    }
+
+    // --- Deferred resource requests (§6.5.1, AG-26) --------------------------------------------
+
+    /**
+     * A resource's {@code 202} auth-token challenge to complete.
+     *
+     * @param response the resource's 202 response (with {@code Location} and the challenge)
+     * @param requestUri the URI of the original request (base for {@code Location})
+     * @param presentedToken the token the agent presented with the original request
+     * @param resourceId the resource identifier
+     * @param personServer the agent's PS
+     */
+    public record DeferredRequest(
+            AAuthResponse response, String requestUri, String presentedToken, String resourceId, String personServer) {}
+
+    /**
+     * Resolves a resource's {@code 202} auth-token challenge without repeating its invocation: obtain
+     * an auth token through the PS, then poll the same-origin pending URL presenting it.
+     *
+     * @return the polling result; its response is the resource's answer to the held invocation
+     * @throws TokenException if the response is not a deferred challenge or the exchange fails
+     */
+    public static Poller.PollingResult completeDeferredResourceRequest(Agent agent, DeferredRequest request) {
+        AAuthResponse response = request.response();
+        if (response.statusCode() != 202) {
+            throw new TokenException("Expected a deferred resource response", null);
+        }
+        String location = Poller.pendingLocation(response.getHeader("location"), request.requestUri());
+        String resourceToken = extractResourceToken(response.headers());
+        if (resourceToken == null) {
+            throw new TokenException("Deferred auth challenge missing resource token", null);
+        }
+        String authToken = exchangeResourceToken(
+                agent,
+                AuthTokenRequest.of(
+                        resourceToken, request.presentedToken(), request.resourceId(), request.personServer()));
+        return Poller.poll(Poller.Request.builder(location, url -> send(agent, "GET", url, null, authToken))
+                .initialResponse(pollResponse(response))
+                .maxPolls(agent.maxPolls())
+                .onInteraction(agent.onInteraction())
+                .sleeper(agent.sleeper())
+                .build());
+    }
+
+    // --- PS requests -----------------------------------------------------------------------------
+
+    /**
+     * POSTs signed parameters to a PS endpoint, polling a 202 until terminal.
+     *
+     * @return the PS's JSON object response
+     * @throws TokenException with the PS's {@code error} code (default {@code server_error}) when it
+     *     refuses, or when polling fails or the response is not a JSON object
+     */
+    static Map<String, Object> postPs(String endpoint, Map<String, Object> params, Agent agent) {
+        Poller.PollResponse response = post(agent, endpoint, params);
+        if (response.statusCode() == 202) {
+            String location = Poller.pendingLocation(
+                    response.headers().entrySet().stream()
+                            .filter(e -> e.getKey().equalsIgnoreCase("location"))
+                            .map(Map.Entry::getValue)
+                            .findFirst()
+                            .orElse(null),
+                    endpoint);
+            Poller.PollingResult result =
+                    Poller.poll(Poller.Request.builder(location, url -> send(agent, "GET", url, null, agent.agentJwt()))
+                            .initialResponse(response)
+                            .maxPolls(agent.maxPolls())
+                            .onInteraction(agent.onInteraction())
+                            .onClarification(agent.onClarification())
+                            .signedPost((url, body) -> post(agent, url, body))
+                            .sleeper(agent.sleeper())
+                            .build());
+            Poller.PollResponse terminal = result.response();
+            if (!result.success() || terminal == null) {
+                throw new TokenException(
+                        "PS deferred exchange failed: " + result.error() + ": " + result.errorDescription(), null);
+            }
+            response = terminal;
+        }
+        Map<String, Object> data = jsonObject(response.raw());
+        if (response.statusCode() != 200) {
+            Map<String, Object> error = data == null ? Map.of() : data;
+            String code = error.get("error") instanceof String value ? value : "server_error";
+            String detail = error.get("detail") instanceof String value ? value : "PS request failed";
+            throw new TokenException(detail, null, code, null, null);
+        }
+        if (data == null) {
+            throw new TokenException("PS response is not a JSON object", null);
+        }
+        return data;
+    }
+
+    private static Poller.PollResponse post(Agent agent, String url, Map<String, Object> params) {
+        byte[] body;
         try {
-            Map<String, Object> metadata = Metadata.fetchPersonServer(psBase, new DefaultHttpClient(httpClient));
-            Object discovered = metadata.get(field);
-            if (discovered != null && !discovered.toString().isEmpty()) {
-                return discovered.toString();
-            }
-        } catch (RuntimeException e) {
-            // Metadata fetch failed — use the fallback endpoint.
+            body = MAPPER.writeValueAsBytes(params);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to serialize PS request", e);
         }
-        return fallback;
+        return send(agent, "POST", url, body, agent.agentJwt());
     }
 
-    private static String stripTrailingSlash(String url) {
-        return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+    private static Poller.PollResponse send(
+            Agent agent, String method, String url, byte @Nullable [] body, String token) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        SignRequest.Builder sign =
+                SignRequest.builder(method, url).keyPair(agent.keyPair()).scheme(new SignatureScheme.Jwt(token));
+        if (body != null) {
+            headers.put("Content-Type", "application/json");
+            sign.headers(headers).body(body).additionalComponents(BODY_COMPONENTS);
+        }
+        headers.putAll(RequestSigner.sign(sign.build()));
+        try {
+            return pollResponse(agent.transport().send(method, url, headers, body));
+        } catch (IOException e) {
+            throw new UncheckedIOException(method + " " + url + " failed: " + e.getMessage(), e);
+        }
     }
 
-    /**
-     * Polls a 202 deferred response's {@code Location} until terminal, signing each request as the
-     * agent. Throws when polling ends unsuccessfully.
-     */
-    private static Poller.PollingResult pollDeferred(
-            Caller caller,
-            HttpJson accepted,
-            int maxPolls,
-            @Nullable BiConsumer<String, String> onInteraction,
-            @Nullable BiFunction<String, String, String> onClarification,
-            Poller.@Nullable Sleeper sleeper) {
-        String location = accepted.header("location");
-        if (location == null) {
-            throw new TokenException("PS returned 202 but no Location header — cannot poll", "aa-auth+jwt");
-        }
+    // --- Helpers ---------------------------------------------------------------------------------
 
-        Poller.Request.Builder pollRequest = Poller.Request.builder(location, url -> {
-                    Map<String, String> headers = signedHeaders(caller, "GET", url, Map.of());
-                    HttpJson polled = send(caller, request(url).GET(), headers);
-                    return new Poller.PollResponse(polled.status(), polled.body(), polled.headers());
-                })
-                .maxPolls(maxPolls)
-                .onInteraction(onInteraction)
-                .sleeper(sleeper);
-        if (onClarification != null) {
-            pollRequest.onClarification(onClarification).signedPost((url, postBodyMap) -> {
-                HttpJson posted = postJson(caller, url, toJsonBytes(postBodyMap));
-                return new Poller.PollResponse(posted.status(), posted.body(), posted.headers());
-            });
-        }
-
-        Poller.PollingResult result = Poller.poll(pollRequest.build());
-        if (!result.success()) {
-            throw new TokenException(
-                    "PS deferred request failed: " + result.error() + " — " + result.errorDescription(), "aa-auth+jwt");
-        }
-        return result;
+    private static Map<String, Object> signingJwk(Agent agent) {
+        return Jwk.publicKeyToJwk(agent.keyPair().getPublic(), null);
     }
 
-    // --- HTTP helpers --------------------------------------------------------------------------
+    /** Verifies the agent's own token against its signing key; sub-agents are refused. */
+    private static Map<String, Object> verifyAgent(Agent agent, Map<String, Object> key, String subAgentMessage) {
+        Map<String, Object> claims = TokenVerifier.verify(
+                agent.agentJwt(),
+                agent.jwksFetcher(),
+                TokenVerifier.Options.forType(AgentTokens.TYPE).withRequestSigningJwk(key));
+        if (claims.containsKey("parent_agent")) {
+            throw new TokenException(subAgentMessage, AgentTokens.TYPE);
+        }
+        return claims;
+    }
 
-    private record HttpJson(int status, Map<String, Object> body, Map<String, String> headers, String raw) {
-        @Nullable
-        String header(String name) {
-            for (Map.Entry<String, String> entry : headers.entrySet()) {
-                if (entry.getKey().equalsIgnoreCase(name)) {
-                    return entry.getValue();
-                }
-            }
+    private static Delegation.UpstreamOptions upstreamOptions(Agent agent, String personServer) {
+        return new Delegation.UpstreamOptions(agent.agentJwt(), personServer, Set.of(), "as", null);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> confirmationJwk(Map<String, Object> claims) {
+        if (claims.get("cnf") instanceof Map<?, ?> cnf && cnf.get("jwk") instanceof Map<?, ?> jwk) {
+            return (Map<String, Object>) jwk;
+        }
+        throw new TokenException("Missing cnf.jwk", null, "invalid_jwt", null, null);
+    }
+
+    private static long number(@Nullable Object value) {
+        if (value instanceof Number n) {
+            return n.longValue();
+        }
+        throw new TokenException("Missing or invalid exp", null, "invalid_jwt", null, null);
+    }
+
+    static Poller.PollResponse pollResponse(AAuthResponse response) {
+        Map<String, Object> body = jsonObject(response.body());
+        return new Poller.PollResponse(
+                response.statusCode(), body == null ? Map.of() : body, response.headers(), response.body());
+    }
+
+    private static @Nullable Map<String, Object> jsonObject(byte[] raw) {
+        if (raw.length == 0) {
             return null;
         }
-
-        String rawBodyPreview() {
-            return raw.length() > 500 ? raw.substring(0, 500) : raw;
-        }
-    }
-
-    /** Minimal signing/transport context shared by the resource-token and person-token flows. */
-    private record Caller(HttpClient httpClient, KeyPair keyPair, String agentJwt) {}
-
-    /** Signs a body-less request (polling GETs) as the agent under the {@code jwt} scheme. */
-    private static Map<String, String> signedHeaders(
-            Caller caller, String method, String url, Map<String, String> headers) {
-        return RequestSigner.sign(SignRequest.builder(method, url)
-                .headers(headers)
-                .keyPair(caller.keyPair())
-                .scheme(new SignatureScheme.Jwt(caller.agentJwt()))
-                .build());
-    }
-
-    /**
-     * Signs a request carrying a body. Draft-11 §11.3.3 (AG-50) requires {@code content-digest}
-     * and {@code content-type} coverage on every PS/AS request with a body; the signer computes
-     * and returns the {@code Content-Digest} header.
-     */
-    private static Map<String, String> signedBodyHeaders(
-            Caller caller, String url, Map<String, String> headers, byte[] body) {
-        return RequestSigner.sign(SignRequest.builder("POST", url)
-                .headers(headers)
-                .body(body)
-                .additionalComponents(BODY_COMPONENTS)
-                .keyPair(caller.keyPair())
-                .scheme(new SignatureScheme.Jwt(caller.agentJwt()))
-                .build());
-    }
-
-    private static HttpJson postJson(Caller caller, String url, byte[] body) {
-        Map<String, String> headers = new LinkedHashMap<>();
-        headers.put("Content-Type", "application/json");
-        headers.putAll(signedBodyHeaders(caller, url, headers, body));
-        return send(caller, request(url).POST(HttpRequest.BodyPublishers.ofByteArray(body)), headers);
-    }
-
-    private static HttpRequest.Builder request(String url) {
-        return HttpRequest.newBuilder(URI.create(url)).timeout(Duration.ofSeconds(30));
-    }
-
-    private static HttpJson send(Caller caller, HttpRequest.Builder builder, Map<String, String> headers) {
-        for (Map.Entry<String, String> header : headers.entrySet()) {
-            builder.header(header.getKey(), header.getValue());
-        }
-        HttpResponse<String> response;
         try {
-            response = caller.httpClient().send(builder.build(), HttpResponse.BodyHandlers.ofString());
+            JsonNode node = MAPPER.readTree(raw);
+            return node != null && node.isObject() ? MAPPER.convertValue(node, MAP_TYPE) : null;
         } catch (IOException e) {
-            throw new TokenException(
-                    "PS token_endpoint request failed: " + e.getMessage(), "aa-auth+jwt", null, null, e);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new TokenException("Interrupted during PS token exchange", "aa-auth+jwt", null, null, e);
+            return null;
         }
+    }
 
-        Map<String, Object> body = Map.of();
-        String raw = response.body() == null ? "" : response.body();
-        if (!raw.isEmpty()) {
+    /** Adapts a transport to metadata discovery: a GET whose 2xx JSON object body is returned. */
+    private static JsonHttpClient jsonClient(HttpTransport transport) {
+        return url -> {
+            AAuthResponse response;
             try {
-                body = MAPPER.readValue(raw, MAP_TYPE);
+                response = transport.send("GET", url, Map.of("Accept", "application/json"), null);
             } catch (IOException e) {
-                body = Map.of();
+                throw new UncheckedIOException("GET " + url + " failed: " + e.getMessage(), e);
             }
-        }
-        Map<String, String> flatHeaders = new LinkedHashMap<>();
-        response.headers().map().forEach((name, values) -> {
-            if (!values.isEmpty()) {
-                flatHeaders.put(name, values.get(0));
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new IllegalStateException("GET " + url + " returned HTTP " + response.statusCode());
             }
-        });
-        return new HttpJson(response.statusCode(), body, flatHeaders, raw);
-    }
-
-    private static byte[] toJsonBytes(Map<String, Object> value) {
-        try {
-            return MAPPER.writeValueAsString(value).getBytes(StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            throw new TokenException(
-                    "Failed to serialize request body: " + e.getMessage(), "aa-auth+jwt", null, null, e);
-        }
+            Map<String, Object> body = jsonObject(response.body());
+            if (body == null) {
+                throw new IllegalStateException("GET " + url + " did not return a JSON object");
+            }
+            return body;
+        };
     }
 }

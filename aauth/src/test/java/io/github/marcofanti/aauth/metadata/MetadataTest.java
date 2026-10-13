@@ -110,20 +110,61 @@ class MetadataTest {
     }
 
     @Test
-    void personServerFetchFallsBackToExtensionlessPath() {
-        Map<String, Object> fetched = Metadata.fetchPersonServer("https://ps.uma.lab/", url -> {
-            if (url.endsWith("/.well-known/aauth-person.json")) {
-                throw new JwksException("404");
-            }
-            assertThat(url).isEqualTo("https://ps.uma.lab/.well-known/aauth-person");
-            return Map.of("issuer", "https://ps.uma.lab");
-        });
-
-        assertThat(fetched).containsEntry("issuer", "https://ps.uma.lab");
+    void personServerFetchIsStrictAndValidated() {
+        Map<String, Object> document = Metadata.personServer(
+                        "https://ps.uma.lab",
+                        "https://ps.uma.lab/identity",
+                        "https://ps.uma.lab/authorize",
+                        "https://ps.uma.lab/jwks")
+                .build();
+        java.util.List<String> fetched = new java.util.ArrayList<>();
+        assertThat(Metadata.fetchPersonServer("https://ps.uma.lab", url -> {
+                    fetched.add(url);
+                    return document;
+                }))
+                .containsEntry("auth_token_endpoint", "https://ps.uma.lab/authorize");
+        assertThat(fetched).containsExactly("https://ps.uma.lab/.well-known/aauth-person.json");
     }
 
     @Test
-    void personServerFetchFailsWhenBothPathsFail() {
+    void validateChecksIssuerFieldsAndUrls() {
+        Map<String, Object> ok = Map.of(
+                "issuer",
+                "https://ps.uma.lab",
+                "jwks_uri",
+                "https://ps.uma.lab/jwks",
+                "auth_token_endpoint",
+                "https://ps.uma.lab/a");
+        assertThat(Metadata.validate(ok, "https://ps.uma.lab", java.util.List.of("jwks_uri")))
+                .isEqualTo(ok);
+
+        assertThatThrownBy(() -> Metadata.validate(Map.of(), "https://ps.uma.lab", java.util.List.of()))
+                .isInstanceOf(MetadataException.class)
+                .extracting(e -> ((MetadataException) e).errorCode())
+                .isEqualTo("issuer_missing");
+        assertThatThrownBy(() -> Metadata.validate(
+                        Map.of("issuer", "https://other.uma.lab"), "https://ps.uma.lab", java.util.List.of()))
+                .extracting(e -> ((MetadataException) e).errorCode())
+                .isEqualTo("issuer_mismatch");
+        assertThatThrownBy(() -> Metadata.validate(
+                        Map.of("issuer", "https://ps.uma.lab"), "https://ps.uma.lab", java.util.List.of("jwks_uri")))
+                .hasMessageContaining("missing jwks_uri");
+        assertThatThrownBy(() -> Metadata.validate(
+                        Map.of("issuer", "https://ps.uma.lab", "auth_token_endpoint", "http://ps.uma.lab/a"),
+                        "https://ps.uma.lab",
+                        java.util.List.of()))
+                .isInstanceOf(MetadataException.class);
+        assertThatThrownBy(() -> Metadata.validate(
+                        Map.of("issuer", "https://ps.uma.lab", "jwks_uri", "http://ps.uma.lab/jwks"),
+                        "https://ps.uma.lab",
+                        java.util.List.of()))
+                .hasMessageContaining("JWKS URI must be HTTPS");
+        assertThatThrownBy(() -> Metadata.validate(Map.of(), "http://ps.uma.lab:8765", java.util.List.of()))
+                .isInstanceOf(MetadataException.class);
+    }
+
+    @Test
+    void personServerFetchFailureIsWrapped() {
         assertThatThrownBy(() -> Metadata.fetchPersonServer("https://ps.uma.lab", url -> {
                     throw new JwksException("404");
                 }))

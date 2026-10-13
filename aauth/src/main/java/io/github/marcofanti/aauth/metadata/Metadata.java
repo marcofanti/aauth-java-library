@@ -1,10 +1,12 @@
 package io.github.marcofanti.aauth.metadata;
 
+import io.github.marcofanti.aauth.Identifiers;
 import io.github.marcofanti.aauth.MetadataException;
 import io.github.marcofanti.aauth.keys.DefaultHttpClient;
 import io.github.marcofanti.aauth.keys.JsonHttpClient;
 import java.net.URI;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -124,23 +126,67 @@ public final class Metadata {
         }
     }
 
+    /** Endpoints a person server's metadata MUST publish for draft-11 agents. */
+    public static final List<String> PS_REQUIRED_FIELDS =
+            List.of("jwks_uri", "auth_token_endpoint", "person_token_endpoint");
+
     /**
-     * Fetches person-server metadata, trying {@code /.well-known/aauth-person.json} then the
-     * extensionless {@code /.well-known/aauth-person}.
+     * Fetches and validates person-server metadata from {@code {ps}/.well-known/aauth-person.json}
+     * (mirrors the reference {@code fetch_ps_metadata}); there is no fallback location.
      *
-     * @throws MetadataException if neither path yields a document
+     * @throws MetadataException if the fetch fails or the document fails {@link #validate}
      */
     public static Map<String, Object> fetchPersonServer(String psUrl, JsonHttpClient httpClient) {
-        String base = psUrl.endsWith("/") ? psUrl.substring(0, psUrl.length() - 1) : psUrl;
-        RuntimeException lastFailure = null;
-        for (String path : new String[] {"/.well-known/" + DWK_PERSON, "/.well-known/aauth-person"}) {
-            try {
-                return client(httpClient).fetchJson(base + path);
-            } catch (RuntimeException e) {
-                lastFailure = e;
+        String url = psUrl + "/.well-known/" + DWK_PERSON;
+        Map<String, Object> metadata;
+        try {
+            metadata = client(httpClient).fetchJson(url);
+        } catch (RuntimeException e) {
+            throw new MetadataException("Failed to fetch PS metadata from " + url + ": " + e.getMessage(), url, e);
+        }
+        return validate(metadata, psUrl, PS_REQUIRED_FIELDS);
+    }
+
+    /**
+     * Validates a metadata document's identity (mirrors the reference {@code validate_metadata}):
+     * {@code issuer} must equal the expected server identifier, every {@code required} field must be
+     * present, every {@code *_endpoint} must be a valid endpoint URL, and {@code jwks_uri} must be
+     * HTTPS.
+     *
+     * @throws MetadataException {@code issuer_missing} / {@code issuer_mismatch}, or for a missing
+     *     field or invalid URL
+     */
+    public static Map<String, Object> validate(Map<String, Object> metadata, String issuer, List<String> required) {
+        try {
+            Identifiers.validateServerIdentifier(issuer);
+        } catch (IllegalArgumentException e) {
+            throw new MetadataException(String.valueOf(e.getMessage()), issuer, e);
+        }
+        if (!metadata.containsKey("issuer")) {
+            throw MetadataException.withCode("Metadata issuer is missing", issuer, "issuer_missing");
+        }
+        if (!issuer.equals(metadata.get("issuer"))) {
+            throw MetadataException.withCode("Metadata issuer mismatch", issuer, "issuer_mismatch");
+        }
+        for (String name : required) {
+            if (!metadata.containsKey(name)) {
+                throw new MetadataException("Metadata missing " + name, issuer, null);
             }
         }
-        throw new MetadataException("Could not fetch PS metadata from " + psUrl, psUrl, lastFailure);
+        for (Map.Entry<String, Object> entry : metadata.entrySet()) {
+            String name = entry.getKey();
+            try {
+                if (name.endsWith("_endpoint")) {
+                    Identifiers.validateEndpointUrl(String.valueOf(entry.getValue()));
+                }
+                if ("jwks_uri".equals(name) && !String.valueOf(entry.getValue()).startsWith("https://")) {
+                    throw new IllegalArgumentException("JWKS URI must be HTTPS");
+                }
+            } catch (IllegalArgumentException e) {
+                throw new MetadataException(String.valueOf(e.getMessage()), issuer, e);
+            }
+        }
+        return metadata;
     }
 
     private static Doc required(String issuer, String jwksUri) {

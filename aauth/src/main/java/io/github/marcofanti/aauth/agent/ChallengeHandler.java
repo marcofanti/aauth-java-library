@@ -3,7 +3,7 @@ package io.github.marcofanti.aauth.agent;
 import io.github.marcofanti.aauth.ChallengeException;
 import io.github.marcofanti.aauth.headers.AAuthHeaders;
 
-/** Handles AAuth challenges from resources and auth servers (agent role). */
+/** Selects the credential for a published draft-11 requirement (mirrors the reference). */
 public final class ChallengeHandler {
 
     /**
@@ -25,43 +25,29 @@ public final class ChallengeHandler {
     }
 
     /**
-     * Determines the signature scheme to use in response to a challenge.
+     * Determines the signature scheme for a challenge. Draft-11 requirements are
+     * {@code agent-token}, {@code person-token} and {@code auth-token}; each is met only by
+     * presenting that token, always under the {@code jwt} scheme — there is no pseudonymous
+     * fallback.
      *
-     * <p>Draft-11 §6.4 / AG-12: {@code requirement=person-token} is met by presenting the person
-     * token under the {@code jwt} scheme — or the auth token, once the agent holds one for the
-     * resource. An agent with neither cannot meet it (an agent without a PS never can).
-     *
-     * @param challenge the parsed challenge
-     * @param held the tokens the agent holds
-     * @return {@code hwk}, {@code jwks_uri} or {@code jwt}
-     * @throws ChallengeException if the challenge cannot be satisfied
+     * @return {@code jwt}
+     * @throws ChallengeException for any other requirement, or when the required token is not held
      */
     public String determineResponseScheme(AAuthHeaders.ParsedChallenge challenge, HeldTokens held) {
-        String require = challenge.requirement();
-
-        if (AAuthHeaders.REQUIRE_AUTH_TOKEN.equals(require)) {
-            if (held.authToken()) {
-                return "jwt";
-            }
-            throw new ChallengeException(
-                    "Challenge requires auth token but agent doesn't have one", AAuthHeaders.REQUIRE_AUTH_TOKEN);
+        String requirement = challenge.requirement();
+        boolean available;
+        if (AAuthHeaders.REQUIRE_AGENT_TOKEN.equals(requirement)) {
+            available = held.agentToken();
+        } else if (AAuthHeaders.REQUIRE_PERSON_TOKEN.equals(requirement)) {
+            available = held.personToken();
+        } else if (AAuthHeaders.REQUIRE_AUTH_TOKEN.equals(requirement)) {
+            available = held.authToken();
+        } else {
+            throw new ChallengeException("Unsupported or non-credential requirement", requirement);
         }
-
-        if (AAuthHeaders.REQUIRE_PERSON_TOKEN.equals(require)) {
-            if (held.authToken() || held.personToken()) {
-                return "jwt";
-            }
-            throw new ChallengeException(
-                    "Challenge requires a person token but agent doesn't have one; request one from the"
-                            + " person server's person_token_endpoint",
-                    AAuthHeaders.REQUIRE_PERSON_TOKEN);
+        if (!available) {
+            throw new ChallengeException("Required token is unavailable", requirement);
         }
-
-        if (AAuthHeaders.REQUIRE_IDENTITY.equals(require)) {
-            return held.agentToken() ? "jwt" : "jwks_uri";
-        }
-
-        // Pseudonym or anything else — sign with an inline key.
-        return "hwk";
+        return "jwt";
     }
 }
