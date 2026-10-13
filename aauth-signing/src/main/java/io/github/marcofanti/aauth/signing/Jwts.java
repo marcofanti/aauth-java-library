@@ -96,6 +96,56 @@ public final class Jwts {
     }
 
     /**
+     * Encodes and signs a compact JWT with header {@code {typ, alg, kid}}, deriving the
+     * fully-specified {@code alg} from the key: {@code Ed25519} for an EdDSA key, {@code ES256} /
+     * {@code ES384} for an EC P-256 / P-384 key (mirrors the reference {@code encode_jwt}).
+     *
+     * @throws AAuthException if the key type is unsupported or signing fails
+     */
+    public static String encode(Map<String, Object> payload, PrivateKey privateKey, String kid, String typ) {
+        String alg = algFor(privateKey);
+        Map<String, Object> header = new LinkedHashMap<>();
+        header.put("typ", typ);
+        header.put("alg", alg);
+        header.put("kid", kid);
+        try {
+            String headerPart = B64URL.encodeToString(MAPPER.writeValueAsBytes(header));
+            String payloadPart = B64URL.encodeToString(MAPPER.writeValueAsBytes(payload));
+            byte[] signingInput = (headerPart + "." + payloadPart).getBytes(StandardCharsets.US_ASCII);
+            Signature signer = Signature.getInstance(jdkAlgorithm(alg));
+            signer.initSign(privateKey);
+            signer.update(signingInput);
+            return headerPart + "." + payloadPart + "." + B64URL.encodeToString(signer.sign());
+        } catch (IOException | GeneralSecurityException e) {
+            throw new AAuthException("Failed to sign JWT: " + e.getMessage(), e);
+        }
+    }
+
+    private static String algFor(PrivateKey privateKey) {
+        if (privateKey instanceof java.security.interfaces.EdECPrivateKey) {
+            return "Ed25519";
+        }
+        if (privateKey instanceof java.security.interfaces.ECPrivateKey ecKey) {
+            int fieldSize = ecKey.getParams().getCurve().getField().getFieldSize();
+            if (fieldSize == 256) {
+                return "ES256";
+            }
+            if (fieldSize == 384) {
+                return "ES384";
+            }
+        }
+        throw new AAuthException("Unsupported JWT signing key: " + privateKey.getAlgorithm());
+    }
+
+    private static String jdkAlgorithm(String alg) {
+        return switch (alg) {
+            case "ES256" -> "SHA256withECDSAinP1363Format";
+            case "ES384" -> "SHA384withECDSAinP1363Format";
+            default -> "Ed25519";
+        };
+    }
+
+    /**
      * Verifies the signature of a parsed JWT against a public key, dispatching on the
      * fully-specified {@code alg} header ({@code Ed25519}, {@code ES256}, {@code ES384}). The
      * polymorphic {@code EdDSA} and every other algorithm are rejected (RFC 9864, AAuth draft-11).

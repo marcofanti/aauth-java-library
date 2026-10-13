@@ -23,6 +23,9 @@ public final class AAuthHeaders {
     public static final String REQUIRE_PSEUDONYM = "pseudonym";
     public static final String REQUIRE_IDENTITY = "identity";
 
+    /** Draft-11: the resource requires the agent to sign with its agent token. */
+    public static final String REQUIRE_AGENT_TOKEN = "agent-token";
+
     /** Draft-11 §6.4: the resource needs a person token before it will authorize. */
     public static final String REQUIRE_PERSON_TOKEN = "person-token";
 
@@ -112,6 +115,11 @@ public final class AAuthHeaders {
      */
     public static String buildPersonTokenRequirement() {
         return "requirement=person-token";
+    }
+
+    /** Builds an {@code AAuth-Requirement} value requiring an agent token (draft-11). */
+    public static String buildAgentTokenRequirement() {
+        return "requirement=agent-token";
     }
 
     /** Builds an {@code AAuth-Requirement} value for user interaction. */

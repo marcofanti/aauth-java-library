@@ -1,91 +1,78 @@
 package io.github.marcofanti.aauth.resource;
 
-import io.github.marcofanti.aauth.TokenException;
+import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.keys.Jwk;
 import io.github.marcofanti.aauth.tokens.ResourceTokens;
+import io.github.marcofanti.aauth.tokens.RevocationChecker;
 import java.security.PrivateKey;
 import java.security.PublicKey;
-import java.util.Map;
+import java.util.function.UnaryOperator;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Issues resource tokens ({@code aa-resource+jwt}) for agents (resource role), draft-11 §6.7.
- *
- * <p>A resource token is issued only after the resource has verified a person token (at the
- * authorization endpoint) or an auth token (on a step-up). The {@link Grant} carries the context
- * drawn from that verified token: its audience ({@code ps}), the person identifier ({@code sub}),
- * and its {@code jti} ({@code presentedJti}).
+ * Issues resource tokens ({@code aa-resource+jwt}) for the resource role (draft-11 §6.7, mirrors
+ * the reference {@code resource/token_issuer}). Issuance requires the verified person or auth token
+ * the agent presented; its binding claims are derived from that token.
  */
 public final class ResourceTokenIssuer {
 
     private final String resourceId;
     private final PrivateKey resourcePrivateKey;
     private final String resourceKid;
+    private final String authServer;
+    private final JwksFetcher jwksFetcher;
+    private final @Nullable RevocationChecker revocationChecker;
 
     /**
-     * @param resourceId resource identifier (HTTPS URL)
-     * @param resourcePrivateKey resource's Ed25519 signing key
+     * @param resourceId resource identifier (server identifier)
+     * @param resourcePrivateKey resource's signing key
      * @param resourceKid resource's key ID
+     * @param authServer the token's audience: the PS (three-party) or the AS (four-party)
+     * @param jwksFetcher resolves presented-token issuers' JWKS from {@code (iss, dwk, kid)}
+     * @param revocationChecker consulted for the presented token, or {@code null}
      */
-    public ResourceTokenIssuer(String resourceId, PrivateKey resourcePrivateKey, String resourceKid) {
+    public ResourceTokenIssuer(
+            String resourceId,
+            PrivateKey resourcePrivateKey,
+            String resourceKid,
+            String authServer,
+            JwksFetcher jwksFetcher,
+            @Nullable RevocationChecker revocationChecker) {
         this.resourceId = resourceId;
         this.resourcePrivateKey = resourcePrivateKey;
         this.resourceKid = resourceKid;
+        this.authServer = authServer;
+        this.jwksFetcher = jwksFetcher;
+        this.revocationChecker = revocationChecker;
     }
 
     /**
-     * Context for a resource-token issuance, drawn from the verified presented token.
+     * Issues a resource token bound to the agent's key and the presented token.
      *
-     * @param agentPublicKey agent's public signing key (bound as {@code agent_jkt})
-     * @param scope space-separated scope values
-     * @param aud audience: the PS that issued the person token (three-party) or the AS (four-party)
-     * @param ps person server identifier (the person token's {@code iss})
-     * @param sub person identifier copied from the presented token
-     * @param presentedJti {@code jti} of the token the agent presented
-     * @param exp expiration (Unix seconds), or {@code null} for the 10-minute default
-     * @param missionS256 mission binding copied from the presented token, or {@code null}
-     * @param tenant organization context copied from the presented token, or {@code null}
+     * @param presentedToken the person or auth token the agent presented
+     * @param agentPublicKey the key that signed the agent's request
+     * @param scope requested scopes, or {@code null}
+     * @param exp expiration (Unix seconds), or {@code null} for the five-minute default
+     * @param options sets optional claims ({@code account}, {@code login_hint},
+     *     {@code interaction}), or {@code null}
+     * @throws io.github.marcofanti.aauth.TokenException if the presented token fails verification
      */
-    public record Grant(
+    public String issueToken(
+            String presentedToken,
             PublicKey agentPublicKey,
-            String scope,
-            String aud,
-            String ps,
-            String sub,
-            String presentedJti,
+            @Nullable String scope,
             @Nullable Long exp,
-            @Nullable String missionS256,
-            @Nullable String tenant) {}
-
-    /**
-     * Issues a resource token binding the agent's key thumbprint to the requested scope.
-     *
-     * @throws TokenException if token creation fails
-     */
-    public String issueToken(Grant grant) {
-        try {
-            Map<String, Object> agentJwk = Jwk.publicKeyToJwk(grant.agentPublicKey(), null);
-            String agentJkt = Jwk.thumbprint(agentJwk);
-            return ResourceTokens.create(new ResourceTokens.Spec(
-                    resourceId,
-                    grant.aud(),
-                    agentJkt,
-                    grant.scope(),
-                    grant.ps(),
-                    grant.sub(),
-                    grant.presentedJti(),
-                    resourcePrivateKey,
-                    resourceKid,
-                    grant.exp(),
-                    grant.missionS256(),
-                    grant.tenant(),
-                    null,
-                    null));
-        } catch (TokenException e) {
-            throw e;
-        } catch (RuntimeException e) {
-            throw new TokenException(
-                    "Failed to issue resource token: " + e.getMessage(), ResourceTokens.TYPE, null, null, e);
-        }
+            @Nullable UnaryOperator<ResourceTokens.Spec.Builder> options) {
+        ResourceTokens.Spec.Builder builder = ResourceTokens.Spec.builder(
+                        resourceId,
+                        authServer,
+                        Jwk.thumbprint(Jwk.publicKeyToJwk(agentPublicKey, null)),
+                        resourcePrivateKey,
+                        resourceKid)
+                .presentedToken(presentedToken, jwksFetcher)
+                .scope(scope)
+                .exp(exp)
+                .revocationChecker(revocationChecker);
+        return ResourceTokens.create((options == null ? builder : options.apply(builder)).build());
     }
 }

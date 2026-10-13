@@ -2,34 +2,41 @@ package io.github.marcofanti.aauth.tokens;
 
 import io.github.marcofanti.aauth.Identifiers;
 import io.github.marcofanti.aauth.TokenException;
+import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.Jwts;
+import io.github.marcofanti.aauth.signing.keys.Jwk;
 import java.security.PrivateKey;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
-/** Agent token ({@code aa-agent+jwt}) creation and verification per AAuth spec §7.1 / §16.2.1. */
+/**
+ * Agent token ({@code aa-agent+jwt}) issuance and verification per AAuth draft-11 §5 (mirrors the
+ * reference {@code aauth_signing.tokens.agent_token}).
+ */
 public final class AgentTokens {
 
     public static final String TYPE = "aa-agent+jwt";
+    public static final String DWK = "aauth-agent.json";
 
     private AgentTokens() {}
 
     /**
      * Parameters for {@link #create(Spec)}.
      *
-     * @param iss agent server identifier (HTTPS URL) — also the agent identifier
-     * @param sub agent delegate identifier (persists across key rotations)
-     * @param cnfJwk agent delegate's public signing key (JWK)
-     * @param privateKey agent server's Ed25519 signing key
-     * @param kid key ID of the agent server's signing key
+     * @param iss agent provider identifier (server identifier)
+     * @param sub agent identifier ({@code aauth:local@domain})
+     * @param cnfJwk the agent's public signing key (JWK with a fully-specified {@code alg})
+     * @param privateKey agent provider's signing key (Ed25519, P-256 or P-384)
+     * @param kid key ID of the agent provider's signing key
      * @param exp expiration (Unix seconds); {@code null} defaults to one hour from now
-     * @param aud optional audience restriction (String or List)
-     * @param audSub optional user identifier hint for the auth server
-     * @param ps optional HTTPS URL of the agent's person server
+     * @param aud optional audience restriction ({@code String} or {@code List})
+     * @param audSub optional user identifier hint
+     * @param ps optional person server identifier (server identifier)
+     * @param parentAgent optional parent agent identifier; requires {@code parentToken}
+     * @param parentToken verified parent agent token, for sub-agent issuance (§10.2.1)
+     * @param jwksFetcher resolves the parent token issuer's JWKS; required with {@code parentToken}
      */
     public record Spec(
             String iss,
@@ -41,13 +48,9 @@ public final class AgentTokens {
             @Nullable Object aud,
             @Nullable String audSub,
             @Nullable String ps,
-            @Nullable String parentAgent) {
-
-        public Spec {
-            if (iss == null || sub == null || cnfJwk == null || privateKey == null || kid == null) {
-                throw new IllegalArgumentException("iss, sub, cnfJwk, privateKey and kid are required");
-            }
-        }
+            @Nullable String parentAgent,
+            @Nullable String parentToken,
+            @Nullable JwksFetcher jwksFetcher) {
 
         public static Builder builder(String iss, String sub, Map<String, Object> cnfJwk, PrivateKey key, String kid) {
             return new Builder(iss, sub, cnfJwk, key, kid);
@@ -65,6 +68,8 @@ public final class AgentTokens {
             private @Nullable String audSub;
             private @Nullable String ps;
             private @Nullable String parentAgent;
+            private @Nullable String parentToken;
+            private @Nullable JwksFetcher jwksFetcher;
 
             private Builder(String iss, String sub, Map<String, Object> cnfJwk, PrivateKey privateKey, String kid) {
                 this.iss = iss;
@@ -94,126 +99,117 @@ public final class AgentTokens {
                 return this;
             }
 
+            /** Names the parent agent explicitly; it must equal the verified parent token's {@code sub}. */
             public Builder parentAgent(String parentAgent) {
                 this.parentAgent = parentAgent;
                 return this;
             }
 
+            /** Issues a sub-agent token under the verified top-level {@code parentToken}. */
+            public Builder parentToken(String parentToken, JwksFetcher jwksFetcher) {
+                this.parentToken = parentToken;
+                this.jwksFetcher = jwksFetcher;
+                return this;
+            }
+
             public Spec build() {
-                return new Spec(iss, sub, cnfJwk, privateKey, kid, exp, aud, audSub, ps, parentAgent);
+                return new Spec(
+                        iss, sub, cnfJwk, privateKey, kid, exp, aud, audSub, ps, parentAgent, parentToken, jwksFetcher);
             }
         }
     }
 
-    /** Creates a signed agent token ({@code aa-agent+jwt}). */
+    /**
+     * Creates a signed agent token.
+     *
+     * @throws TokenException if a claim is invalid or a sub-agent binding rule is violated
+     */
     public static String create(Spec spec) {
+        TokenSupport.checkServer(spec.iss());
+        agentIdentifier(spec.sub());
+        TokenSupport.validateAlgorithm(spec.cnfJwk());
         long now = TokenSupport.nowEpochSeconds();
-        long exp = spec.exp() != null ? spec.exp() : now + 3600;
-
-        Map<String, Object> header = new LinkedHashMap<>();
-        header.put("typ", TYPE);
-        header.put("alg", "Ed25519");
-        header.put("kid", spec.kid());
+        Long requestedExp = spec.exp();
+        long exp = requestedExp != null ? requestedExp : now + TokenSupport.MAX_LIFETIME_SECONDS;
+        if (exp <= now) {
+            throw new TokenException("Invalid agent token expiration", TYPE);
+        }
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("iss", spec.iss());
         payload.put("sub", spec.sub());
-        payload.put("dwk", "aauth-agent.json");
+        payload.put("dwk", DWK);
         payload.put("jti", UUID.randomUUID().toString());
-        payload.put("cnf", Map.of("jwk", spec.cnfJwk()));
         payload.put("iat", now);
         payload.put("exp", exp);
+        payload.put("cnf", Map.of("jwk", spec.cnfJwk()));
+        if (spec.ps() != null) {
+            payload.put("ps", TokenSupport.checkServer(spec.ps()));
+        }
+        if (spec.parentAgent() != null || spec.parentToken() != null) {
+            payload.put("parent_agent", verifiedParentAgent(spec));
+        }
         if (spec.aud() != null) {
             payload.put("aud", spec.aud());
         }
         if (spec.audSub() != null) {
             payload.put("aud_sub", spec.audSub());
         }
-        if (spec.ps() != null) {
-            payload.put("ps", spec.ps());
-        }
-        if (spec.parentAgent() != null) {
-            payload.put("parent_agent", spec.parentAgent());
-        }
-
-        return Jwts.signEdDsa(header, payload, spec.privateKey());
+        return Jwts.encode(payload, spec.privateKey(), spec.kid(), TYPE);
     }
 
     /**
-     * Verifies an agent token per AAuth spec §16.2.1 and returns its payload claims.
-     *
-     * @param token the agent token
-     * @param jwksFetcher resolves the agent server's JWKS from its identifier ({@code iss})
-     * @param expectedAud optional expected audience
-     * @throws TokenException if the token is invalid
+     * Sub-agent rules (§10.2.1): the parent is a verified top-level agent under the same issuer,
+     * the child's local part is the parent's plus a {@code +discriminator} in the same domain, and
+     * the child has its own key.
      */
-    public static Map<String, Object> verify(
-            String token, Function<String, Map<String, Object>> jwksFetcher, String expectedAud) {
-        Jwts.Decoded jwt = TokenSupport.parseOrThrow(token, TYPE);
+    private static String verifiedParentAgent(Spec spec) {
+        String parentToken = spec.parentToken();
+        JwksFetcher fetcher = spec.jwksFetcher();
+        if (parentToken == null || fetcher == null) {
+            throw new TokenException("Sub-agent issuance requires a verified parent token", TYPE);
+        }
+        Map<String, Object> parent = TokenVerifier.verifyAgentClaims(parentToken, fetcher, null);
+        String parentSub = String.valueOf(parent.get("sub"));
+        String namedParent = spec.parentAgent();
+        String parentAgent = agentIdentifier(namedParent != null ? namedParent : parentSub);
+        if (parent.containsKey("parent_agent")
+                || !spec.iss().equals(parent.get("iss"))
+                || !parentSub.equals(parentAgent)) {
+            throw new TokenException("Sub-agent parent must be a top-level agent under the same issuer", TYPE);
+        }
+        Identifiers.AgentIdentifier parentId = Identifiers.parseAgentIdentifier(parentAgent);
+        Identifiers.AgentIdentifier childId = Identifiers.parseAgentIdentifier(spec.sub());
+        if (!childId.domain().equals(parentId.domain())
+                || !childId.local().startsWith(parentId.local() + "+")
+                || childId.local().length() <= parentId.local().length() + 1) {
+            throw new TokenException("Sub-agent identifier requires parent local part plus discriminator", TYPE);
+        }
+        Map<String, Object> parentJwk = TokenSupport.confirmationJwk(parent);
+        if (parentJwk != null && Jwk.thumbprint(spec.cnfJwk()).equals(Jwk.thumbprint(parentJwk))) {
+            throw new TokenException("Sub-agent requires its own key", TYPE);
+        }
+        return parentAgent;
+    }
 
-        Object typ = jwt.header().get("typ");
-        if (!TYPE.equals(typ)) {
-            throw new TokenException("Invalid token type: expected " + TYPE + ", got " + typ, TYPE);
-        }
-        if (jwt.header().get("kid") == null) {
-            throw new TokenException("Token header missing 'kid'", TYPE);
-        }
-        if (jwt.claim("iss") == null) {
-            throw new TokenException("Token payload missing 'iss'", TYPE);
-        }
-        if (!jwt.payload().containsKey("jti")) {
-            throw new TokenException("Token missing required 'jti' claim", TYPE);
-        }
-        if (jwt.claim("sub") == null) {
-            throw new TokenException("Token missing 'sub' claim (agent delegate identifier)", TYPE);
-        }
+    /**
+     * Verifies an agent token and returns its claims.
+     *
+     * @param jwksFetcher resolves the agent provider's JWKS from {@code (iss, dwk, kid)}
+     * @param expectedAud optional expected audience (checked when the token carries {@code aud})
+     * @throws TokenException with the wire error code if the token is invalid
+     */
+    public static Map<String, Object> verify(String token, JwksFetcher jwksFetcher, @Nullable String expectedAud) {
+        return TokenVerifier.verify(
+                token, jwksFetcher, TokenVerifier.Options.forType(TYPE).withAudience(expectedAud));
+    }
 
-        TokenSupport.verifySignatureViaIssuer(jwt, token, jwksFetcher, TYPE);
-
-        Long exp = jwt.numericClaim("exp");
-        if (exp == null) {
-            throw new TokenException("Token missing 'exp' claim", TYPE);
+    private static String agentIdentifier(String identifier) {
+        try {
+            return Identifiers.validateAgentIdentifier(identifier);
+        } catch (IllegalArgumentException e) {
+            throw new TokenException(
+                    "Invalid agent identifier: " + identifier, TYPE, TokenSupport.INVALID_JWT, null, e);
         }
-        if (TokenSupport.nowEpochSeconds() >= exp) {
-            throw new TokenException("Token has expired", TYPE);
-        }
-
-        Object aud = jwt.payload().get("aud");
-        if (aud != null && expectedAud != null) {
-            boolean matches = aud instanceof List<?> list ? list.contains(expectedAud) : aud.equals(expectedAud);
-            if (!matches) {
-                throw new TokenException("Invalid audience: expected " + expectedAud + ", got " + aud, TYPE);
-            }
-        }
-
-        Object cnf = jwt.payload().get("cnf");
-        if (!(cnf instanceof Map<?, ?> cnfMap)) {
-            throw new TokenException("Token missing 'cnf' claim", TYPE);
-        }
-        if (!(cnfMap.get("jwk") instanceof Map)) {
-            throw new TokenException("Token missing 'cnf.jwk' claim", TYPE);
-        }
-
-        // Draft-10 §5.2.4 steps 6-7: validate ps and parent_agent when present. The ps claim is
-        // checked as a well-formed http(s) server URL (not strict-HTTPS) so non-TLS dev/demo
-        // origins verify; enforcing HTTPS-in-production is a deployment policy, not a token check.
-        String ps = jwt.claim("ps");
-        if (ps != null) {
-            try {
-                Identifiers.validateServerUrl(ps);
-            } catch (IllegalArgumentException e) {
-                throw new TokenException("Invalid 'ps' claim: " + e.getMessage(), TYPE, null, null, e);
-            }
-        }
-        String parentAgent = jwt.claim("parent_agent");
-        if (parentAgent != null) {
-            try {
-                Identifiers.validateAgentIdentifier(parentAgent);
-            } catch (IllegalArgumentException e) {
-                throw new TokenException("Invalid 'parent_agent' claim: " + e.getMessage(), TYPE, null, null, e);
-            }
-        }
-
-        return jwt.payload();
     }
 }

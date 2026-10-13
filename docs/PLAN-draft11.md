@@ -122,32 +122,32 @@ tests (rewritten against the 0.5.0 API).
   person-server and demo must serve their identifiers over HTTPS without ports to interoperate.
 - The `strict-alg-draft10` branch is superseded by D1 (delete it once D1 lands).
 
-### D1 — aauth-signing (signing/verifier.py, signer.py, signature_*.py, keys/jwk.py, tokens/common.py)
-- [ ] `Jwk.validateAlgorithm(jwk, expectedAlg)` — strict alg set; `unsupported_algorithm` vs
+### D1 — aauth-signing (signing/verifier.py, signer.py, signature_*.py, keys/jwk.py, tokens/common.py) — DONE
+- [x] `Jwk.validateAlgorithm(jwk, expectedAlg)` — strict alg set; `unsupported_algorithm` vs
   `invalid_key` codes; drop RSA from `toPublicKey`/`publicKeyToJwk` (thumbprint keeps RSA).
-- [ ] `Jwts` — strict verify: `kid` required, exactly one JWKS key with that `kid`, key `alg` ==
+- [x] `Jwts` — strict verify: `kid` required, exactly one JWKS key with that `kid`, key `alg` ==
   header `alg`, `iat`/`exp` required, `exp > now`, `exp > iat`; `Ed25519` only (no `EdDSA`).
-- [ ] `SignatureInputHeader` — strict SF parse: one label, inner list of strings, no duplicates,
+- [x] `SignatureInputHeader` — strict SF parse: one label, inner list of strings, no duplicates,
   integer `created`/`expires`.
-- [ ] `SignatureBase` — `authorization` component; arbitrary header components; empty body is a body.
-- [ ] `RequestSigner` — auto-cover `authorization`; always recompute `Content-Digest`; default
+- [x] `SignatureBase` — `authorization` component; arbitrary header components; empty body is a body.
+- [x] `RequestSigner` — auto-cover `authorization`; always recompute `Content-Digest`; default
   `Content-Type: application/octet-stream`; dedupe components; `hwk` key carries `alg`.
-- [ ] `SignatureVerifier` — required components (+`authorization`), `created` window with
+- [x] `SignatureVerifier` — required components (+`authorization`), `created` window with
   `clock_skew`, `expires`, content-digest verified against the body when covered, `keyid` must match
   the Signature-Key, strict `jwt`/`jkt-jwt`/`hwk`/`jwks_uri` key validation, error codes surfaced.
 
-### D2 — tokens (tokens/common.py, agent_token.py, person_token.py, auth_token.py, resource_token.py, delegation.py; identifiers.py)
-- [ ] Generic `verifyToken` (typ→dwk table, server identifiers, required claims, 1-hour cap for
+### D2 — tokens (tokens/common.py, agent_token.py, person_token.py, auth_token.py, resource_token.py, delegation.py; identifiers.py) — DONE
+- [x] Generic `verifyToken` (typ→dwk table, server identifiers, required claims, 1-hour cap for
   person/auth, PS-issued auth `ps == iss`, `mission_s256` format, `scope` type, `cnf.jwk` thumbprint,
   revocation checker → `revoked_jwt`, wire error codes).
-- [ ] Agent tokens: strict `iss`/`sub` (agent identifier)/`ps`/`parent_agent`; sub-agent issuance.
-- [ ] Person tokens: `exp` bounded by agent/mission/upstream expirations; drop `account`/`scope`/
+- [x] Agent tokens: strict `iss`/`sub` (agent identifier)/`ps`/`parent_agent`; sub-agent issuance.
+- [x] Person tokens: `exp` bounded by agent/mission/upstream expirations; drop `account`/`scope`/
   `capabilities` (not in the reference).
-- [ ] Auth tokens: bounded by agent/presented/upstream/mission; `dwk` ∈ {person, access} rules.
-- [ ] Resource tokens: issuance verifies the presented token and derives `ps`/`sub`/`presented_jti`/
+- [x] Auth tokens: bounded by agent/presented/upstream/mission; `dwk` ∈ {person, access} rules.
+- [x] Resource tokens: issuance verifies the presented token and derives `ps`/`sub`/`presented_jti`/
   `mission_s256`/`tenant`; verification re-checks the binding; 300 s default lifetime.
-- [ ] Delegation: `verifySubagentToken`, `verifyUpstreamToken`.
-- [ ] `Identifiers`: uppercase `local`, strict domain regex, credentials/ASCII checks; remove
+- [x] Delegation: `verifySubagentToken`, `verifyUpstreamToken`.
+- [x] `Identifiers`: uppercase `local`, strict domain regex, credentials/ASCII checks; remove
   `validateServerUrl`.
 
 ### D3 — revocation.py, missions.py
@@ -158,7 +158,7 @@ tests (rewritten against the 0.5.0 API).
 ### D5 — agent role (agent/token_exchange.py, poller.py, challenge_handler.py, signer.py)
 ### D6 — headers/aauth_header.py, metadata/*, keys/jwks.py, http/deferred.py
 ### D7 — interop + docs
-- [ ] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override.
+- [x] Rewrite `PythonInteropTest` for the 0.5.0 API; `AAUTH_PYTHON_LIB` env override (9 two-way tests, done with D2).
 - [ ] PROGRESS decision log; README; DEMO integration contract (HTTPS identifiers).
 
 ## Cross-repo sequencing

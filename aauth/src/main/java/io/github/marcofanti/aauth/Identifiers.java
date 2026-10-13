@@ -11,7 +11,10 @@ import java.util.regex.Pattern;
  */
 public final class Identifiers {
 
-    private static final Pattern AAUTH_LOCAL = Pattern.compile("^[a-z0-9\\-_+.]+$");
+    private static final Pattern AAUTH_LOCAL = Pattern.compile("^[A-Za-z0-9\\-_+.]+$");
+
+    /** Lowercase DNS hostname: no scheme, port, path or uppercase (reference token-level rule). */
+    private static final Pattern AAUTH_DOMAIN = Pattern.compile("^[a-z0-9](?:[a-z0-9.\\-]*[a-z0-9])?$");
 
     private Identifiers() {}
 
@@ -49,7 +52,7 @@ public final class Identifiers {
         }
         if (!AAUTH_LOCAL.matcher(local).matches()) {
             throw new IllegalArgumentException(
-                    "Agent identifier local part contains invalid characters (only a-z, 0-9, -, _, +, . allowed): "
+                    "Agent identifier local part contains invalid characters (only A-Z, a-z, 0-9, -, _, +, . allowed): "
                             + identifier);
         }
         if (domain.isEmpty()) {
@@ -57,6 +60,10 @@ public final class Identifiers {
         }
         if (domain.contains("://")) {
             throw new IllegalArgumentException("Agent identifier domain must not include a scheme: " + identifier);
+        }
+        if (!AAUTH_DOMAIN.matcher(domain).matches()) {
+            throw new IllegalArgumentException(
+                    "Agent identifier domain must be a lowercase hostname without port: " + identifier);
         }
         return identifier;
     }
@@ -101,6 +108,10 @@ public final class Identifiers {
         }
         if (uri.getHost() == null) {
             throw new IllegalArgumentException("Server identifier must have a hostname: " + url);
+        }
+        if (uri.getRawUserInfo() != null
+                || !java.nio.charset.StandardCharsets.US_ASCII.newEncoder().canEncode(url)) {
+            throw new IllegalArgumentException("Server identifier contains credentials or invalid host: " + url);
         }
         if (uri.getPort() != -1) {
             throw new IllegalArgumentException("Server identifier must not contain a port: " + url);
@@ -159,31 +170,6 @@ public final class Identifiers {
         URI uri = parseUri(url, "URL");
         if (!"https".equals(uri.getScheme())) {
             throw new IllegalArgumentException("URL must use https scheme: " + url);
-        }
-        return url;
-    }
-
-    /**
-     * Validates a server URL loosely for token-claim checks: an absolute {@code http(s)} URL
-     * with a host. Unlike {@link #validateServerIdentifier}, this tolerates {@code http} and a
-     * port so dev/demo deployments on non-TLS hosts (e.g. {@code http://ps.uma.lab:8765}) are
-     * accepted. The draft-10 requirement that a production {@code ps} be HTTPS is a deployment
-     * policy, not a reason to fail token verification.
-     *
-     * @return the URL unchanged when valid
-     * @throws IllegalArgumentException if the URL is not an absolute http(s) URL with a host
-     */
-    public static String validateServerUrl(String url) {
-        if (url == null || url.isEmpty()) {
-            throw new IllegalArgumentException("Server URL must not be empty");
-        }
-        URI uri = parseUri(url, "Server URL");
-        String scheme = uri.getScheme();
-        if (!"https".equals(scheme) && !"http".equals(scheme)) {
-            throw new IllegalArgumentException("Server URL must use http or https scheme: " + url);
-        }
-        if (uri.getHost() == null) {
-            throw new IllegalArgumentException("Server URL must have a hostname: " + url);
         }
         return url;
     }

@@ -3,12 +3,14 @@ package io.github.marcofanti.aauth.resource;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import io.github.marcofanti.aauth.ChallengeException;
+import io.github.marcofanti.aauth.TokenException;
 import io.github.marcofanti.aauth.agent.AgentRequestSigner;
 import io.github.marcofanti.aauth.headers.AAuthHeaders;
+import io.github.marcofanti.aauth.signing.JwksFetcher;
 import io.github.marcofanti.aauth.signing.keys.Jwk;
 import io.github.marcofanti.aauth.signing.keys.KeyPairs;
 import io.github.marcofanti.aauth.tokens.AuthTokens;
+import io.github.marcofanti.aauth.tokens.PersonTokens;
 import io.github.marcofanti.aauth.tokens.ResourceTokens;
 import java.security.KeyPair;
 import java.util.LinkedHashMap;
@@ -28,6 +30,43 @@ class ResourceRoleTest {
     private final KeyPair resourceKeys = KeyPairs.generateEd25519();
     private final KeyPair agentKeys = KeyPairs.generateEd25519();
     private final KeyPair authServerKeys = KeyPairs.generateEd25519();
+    private final KeyPair psKeys = KeyPairs.generateEd25519();
+    private final Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
+
+    /** Resolves the PS and resource JWKS, as a PS or AS would. */
+    private final JwksFetcher issuerJwks = (id, dwk, kid) -> {
+        if (PS.equals(id)) {
+            return Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(psKeys.getPublic(), "ps-key-1")));
+        }
+        if (RESOURCE_ID.equals(id)) {
+            return Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-key-1")));
+        }
+        return null;
+    };
+
+    private long now() {
+        return java.time.Instant.now().getEpochSecond();
+    }
+
+    /** A person token the PS issued to the agent for this resource. */
+    private String personToken() {
+        return PersonTokens.create(
+                PersonTokens.Spec.builder(PS, RESOURCE_ID, PERSON_SUB, agentJwk, psKeys.getPrivate(), "ps-key-1")
+                        .agentExp(now() + 600)
+                        .build());
+    }
+
+    private ChallengeBuilder challengeBuilder() {
+        return new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", PS, issuerJwks);
+    }
+
+    private AuthTokens.Spec.Builder authToken(String scope) {
+        return AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
+                .cnfJwk(agentJwk)
+                .signingKey(authServerKeys.getPrivate(), "as-key-1")
+                .bounds(now() + 600, now() + 600)
+                .scope(scope);
+    }
 
     private final RequestVerifier verifier = new RequestVerifier(List.of("gateway.uma.lab"), (id, dwk, kid) -> {
         if ("https://portal.uma.lab".equals(id)) {
@@ -70,36 +109,29 @@ class ResourceRoleTest {
 
     @Test
     void fullAuthTokenFlowFromChallengeToVerifiedScopes() {
-        // 1. Resource challenges the agent with an embedded resource token (draft-11: built from
-        //    the context of the person token the agent presented at the authorization endpoint).
-        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
-        ResourceTokenIssuer.Grant grant = new ResourceTokenIssuer.Grant(
-                agentKeys.getPublic(), "data.read", PS, PS, PERSON_SUB, "person-jti-1", null, null, null);
-        ChallengeBuilder.Challenge challenge = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.authToken(grant));
+        // 1. The agent presented a person token; the resource challenges with an embedded
+        //    resource token bound to it (draft-11 §6.7).
+        String presented = personToken();
+        ChallengeBuilder.Challenge challenge = challengeBuilder()
+                .buildChallenge(ChallengeBuilder.Spec.authToken(presented, agentKeys.getPublic(), "data.read"));
 
         assertThat(challenge.headerName()).isEqualTo(AAuthHeaders.HEADER_AAUTH_REQUIREMENT);
         String resourceToken =
                 AAuthHeaders.parseAAuthHeader(challenge.headerValue()).resourceToken();
         assertThat(resourceToken).isNotNull();
 
-        // 2. The PS verifies the resource token (agent key binding included).
-        Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
+        // 2. The PS verifies the resource token and its binding to the presented person token.
         Map<String, Object> resourceClaims = ResourceTokens.verify(
                 resourceToken,
-                iss -> Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-key-1"))),
-                PS,
-                Jwk.thumbprint(agentJwk));
+                issuerJwks,
+                new ResourceTokens.VerifyOptions(presented, PS, RESOURCE_ID, PS, Jwk.thumbprint(agentJwk), null, null));
         assertThat(resourceClaims)
                 .containsEntry("scope", "data.read")
                 .containsEntry("sub", PERSON_SUB)
-                .containsEntry("presented_jti", "person-jti-1");
+                .containsEntry("ps", PS);
 
         // 3. The auth server issues an auth token bound to the agent's key.
-        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
-                .cnfJwk(agentJwk)
-                .signingKey(authServerKeys.getPrivate(), "as-key-1")
-                .scope("data.read")
-                .build());
+        String authToken = AuthTokens.create(authToken("data.read").build());
 
         // 4. The agent signs the retry with the jwt scheme carrying the auth token.
         AgentRequestSigner signer =
@@ -145,12 +177,7 @@ class ResourceRoleTest {
 
     @Test
     void scopeSplittingCollapsesWhitespace() {
-        Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
-        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
-                .cnfJwk(agentJwk)
-                .signingKey(authServerKeys.getPrivate(), "as-key-1")
-                .scope("data.read  data.write")
-                .build());
+        String authToken = AuthTokens.create(authToken("data.read  data.write").build());
         AgentRequestSigner signer =
                 AgentRequestSigner.builder(agentKeys).agentToken(authToken).build();
         Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwt"));
@@ -212,13 +239,9 @@ class ResourceRoleTest {
     void missionS256IsSurfacedFromPresentedToken() {
         // Draft-11: the mission reaches the resource as mission_s256 inside the presented token,
         // not as an AAuth-Mission header.
-        Map<String, Object> agentJwk = Jwk.publicKeyToJwk(agentKeys.getPublic(), null);
-        String authToken = AuthTokens.create(AuthTokens.Spec.builder(AUTH_SERVER, RESOURCE_ID, PERSON_SUB, PS)
-                .cnfJwk(agentJwk)
-                .signingKey(authServerKeys.getPrivate(), "as-key-1")
-                .scope("data.read")
-                .missionS256("abc123")
-                .build());
+        String mission = "m".repeat(43);
+        String authToken =
+                AuthTokens.create(authToken("data.read").missionS256(mission).build());
         AgentRequestSigner signer =
                 AgentRequestSigner.builder(agentKeys).agentToken(authToken).build();
         Map<String, String> headers = withSignatureHeaders(signer.signRequest("GET", TARGET, Map.of(), null, "jwt"));
@@ -226,7 +249,7 @@ class ResourceRoleTest {
         RequestVerifier.Result result = verifier.verifyRequest("GET", TARGET, headers, null, false, true);
 
         assertThat(result.valid()).isTrue();
-        assertThat(result.missionS256()).isEqualTo("abc123");
+        assertThat(result.missionS256()).isEqualTo(mission);
     }
 
     @Test
@@ -286,49 +309,46 @@ class ResourceRoleTest {
     }
 
     @Test
-    void challengeBuilderEmitsAcceptSignatureLevels() {
-        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
+    void challengesAreAlwaysAAuthRequirements() {
+        // Draft-11: agent-token by default; never a pseudonymous Accept-Signature fallback.
+        ChallengeBuilder.Challenge agent = challengeBuilder().buildChallenge(ChallengeBuilder.Spec.agentToken());
+        assertThat(agent.headerName()).isEqualTo(AAuthHeaders.HEADER_AAUTH_REQUIREMENT);
+        assertThat(agent.headerValue()).isEqualTo("requirement=agent-token");
 
-        ChallengeBuilder.Challenge pseudonym = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.pseudonym());
-        assertThat(pseudonym.headerName()).isEqualTo(AAuthHeaders.HEADER_ACCEPT_SIGNATURE);
-        assertThat(pseudonym.headerValue()).contains("sigkey=jkt");
-
-        ChallengeBuilder.Challenge identity = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.identity());
-        assertThat(identity.headerValue()).contains("sigkey=uri");
+        ChallengeBuilder.Challenge person = challengeBuilder().buildChallenge(ChallengeBuilder.Spec.personToken());
+        assertThat(person.headerValue()).isEqualTo("requirement=person-token");
     }
 
     @Test
-    void personTokenChallengeEmitsRequirement() {
-        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
+    void authTokenChallengeWithoutPresentedTokenAsksForAPersonToken() {
+        ChallengeBuilder.Challenge challenge = challengeBuilder()
+                .buildChallenge(new ChallengeBuilder.Spec(false, true, null, null, "data.read", null));
 
-        ChallengeBuilder.Challenge challenge = challengeBuilder.buildChallenge(ChallengeBuilder.Spec.personToken());
-
-        assertThat(challenge.headerName()).isEqualTo(AAuthHeaders.HEADER_AAUTH_REQUIREMENT);
         assertThat(challenge.headerValue()).isEqualTo("requirement=person-token");
+        assertThatThrownBy(() -> challengeBuilder()
+                        .buildChallenge(new ChallengeBuilder.Spec(false, true, personToken(), null, null, null)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("agentPublicKey");
     }
 
     @Test
-    void authTokenChallengeRequiresGrant() {
-        ChallengeBuilder challengeBuilder = new ChallengeBuilder(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
+    void issuerRequiresAVerifiedPresentedToken() {
+        ResourceTokenIssuer issuer =
+                new ResourceTokenIssuer(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1", PS, issuerJwks, null);
+        String presented = personToken();
 
-        assertThatThrownBy(() -> challengeBuilder.buildChallenge(
-                        new ChallengeBuilder.Spec(false, false, true, null, null, null)))
-                .isInstanceOf(ChallengeException.class)
-                .hasMessageContaining("grant");
-    }
+        String token = issuer.issueToken(presented, agentKeys.getPublic(), "data.write", null, b -> b.account("alice"));
 
-    @Test
-    void issuerProducesVerifiableResourceTokens() {
-        ResourceTokenIssuer issuer = new ResourceTokenIssuer(RESOURCE_ID, resourceKeys.getPrivate(), "r-key-1");
-
-        String token = issuer.issueToken(new ResourceTokenIssuer.Grant(
-                agentKeys.getPublic(), "data.write", PS, PS, PERSON_SUB, "person-jti-1", null, null, null));
-
-        Map<String, Object> claims = ResourceTokens.verify(
-                token,
-                iss -> Jwk.generateJwks(List.of(Jwk.publicKeyToJwk(resourceKeys.getPublic(), "r-key-1"))),
-                PS,
-                null);
-        assertThat(claims).containsEntry("scope", "data.write").containsEntry("sub", PERSON_SUB);
+        Map<String, Object> claims =
+                ResourceTokens.verify(token, issuerJwks, ResourceTokens.VerifyOptions.of(presented));
+        assertThat(claims)
+                .containsEntry("scope", "data.write")
+                .containsEntry("sub", PERSON_SUB)
+                .containsEntry("account", "alice");
+        assertThatThrownBy(() ->
+                        issuer.issueToken(presented, KeyPairs.generateEd25519().getPublic(), "data.write", null, null))
+                .isInstanceOf(TokenException.class)
+                .extracting(e -> ((TokenException) e).errorCode())
+                .isEqualTo("invalid_presented_token");
     }
 }

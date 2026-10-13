@@ -169,7 +169,7 @@ public final class SignatureInputHeader {
                 pos++;
                 skipSpaces();
                 String name = key();
-                Object value = Boolean.TRUE;
+                Object value = true;
                 if (!atEnd() && peek() == '=') {
                     pos++;
                     value = bareItem();
